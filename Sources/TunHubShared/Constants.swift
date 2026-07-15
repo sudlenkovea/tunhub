@@ -15,6 +15,7 @@ public enum TunHub {
     public enum Core {
         public static let wireguard = "wireguard-go"
         public static let amneziawg = "amneziawg-go"   // v0.2.x — covers AmneziaWG 1.5 & 2.0
+        public static let openvpn   = "openvpn"        // community 2.6.x, driven via management interface
     }
 
     // Keychain services.

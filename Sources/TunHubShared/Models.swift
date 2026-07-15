@@ -1,12 +1,26 @@
 import Foundation
 
 public enum TunnelKind: String, Codable, CaseIterable, Identifiable {
-    case wireguard, amneziawg
+    case wireguard, amneziawg, openvpn
     public var id: String { rawValue }
-    public var label: String { self == .wireguard ? "WireGuard" : "AmneziaWG" }
+    public var label: String {
+        switch self {
+        case .wireguard: return "WireGuard"
+        case .amneziawg: return "AmneziaWG"
+        case .openvpn:   return "OpenVPN"
+        }
+    }
     /// Core binary bundled for this tunnel kind. AmneziaWG uses v0.2.x which is
     /// backward-compatible with the 1.5 protocol, so a single core covers both.
-    public var coreBinary: String { self == .wireguard ? TunHub.Core.wireguard : TunHub.Core.amneziawg }
+    public var coreBinary: String {
+        switch self {
+        case .wireguard: return TunHub.Core.wireguard
+        case .amneziawg: return TunHub.Core.amneziawg
+        case .openvpn:   return TunHub.Core.openvpn
+        }
+    }
+    /// WireGuard-family tunnels share the userspace-core + UAPI machinery; OpenVPN does not.
+    public var isWireGuardFamily: Bool { self == .wireguard || self == .amneziawg }
 }
 
 public struct KeychainRef: Codable, Equatable, Hashable {
@@ -79,6 +93,49 @@ public struct AWGParams: Codable, Equatable {
         p.h1 = a[0]; p.h2 = a[1]; p.h3 = a[2]; p.h4 = a[3]
         return p
     }
+}
+
+// MARK: - OpenVPN
+
+public struct OpenVPNRemote: Codable, Equatable {
+    public var host: String
+    public var port: UInt16
+    public var proto: String   // "udp" / "tcp"
+    public init(host: String, port: UInt16, proto: String) {
+        self.host = host; self.port = port; self.proto = proto
+    }
+}
+
+public enum OpenVPNAuthMode: String, Codable {
+    case cert            // certificate only
+    case userPass        // username/password only
+    case userPassCert    // both
+}
+
+public struct OpenVPNStaticChallenge: Codable, Equatable {
+    public var text: String
+    public var echo: Bool    // whether the OTP field should be shown (not masked)
+    public init(text: String, echo: Bool) { self.text = text; self.echo = echo }
+}
+
+/// Parsed metadata for an OpenVPN profile. The full `.ovpn` (with sensitive inline blocks
+/// replaced by placeholders) lives in `configText`; the actual secret material and
+/// username/password live in the Keychain. Scripts are never executed (see design §7).
+public struct OpenVPNProfile: Codable, Equatable {
+    public var remotes: [OpenVPNRemote] = []
+    public var authMode: OpenVPNAuthMode = .cert
+    public var needsUsername: Bool = false           // `auth-user-pass` present (no inline creds)
+    public var staticChallenge: OpenVPNStaticChallenge?
+    public var cipher: String?                       // legacy single `cipher`
+    public var dataCiphers: [String] = []            // `data-ciphers`
+    public var redirectGateway: Bool = false
+    public var dns: [String] = []                    // `dhcp-option DNS` in the profile (if any)
+    public var searchDomains: [String] = []          // `dhcp-option DOMAIN`
+    public var usesInlineCompression: Bool = false   // comp-lzo / compress (VORACLE warning)
+    /// Raw `.ovpn` text with sensitive inline blocks (<key>, <tls-auth>, <tls-crypt>, …)
+    /// and any `auth-user-pass` inline creds replaced by placeholders resolved at connect time.
+    public var configText: String = ""
+    public init() {}
 }
 
 // MARK: - Config
@@ -161,6 +218,7 @@ public struct TunnelConfig: Codable, Equatable, Identifiable {
     public var interface: InterfaceConfig = .init()
     public var peers: [PeerConfig] = []
     public var awg: AWGParams?
+    public var openvpn: OpenVPNProfile?
     public var options: TunnelOptions = .init()
     public var meta: TunnelMeta = .init()
     public var schemaVersion: Int = 1

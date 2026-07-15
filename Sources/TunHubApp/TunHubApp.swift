@@ -159,11 +159,25 @@ struct PhaseDot: View {
 
 struct KindBadge: View {
     let kind: TunnelKind
+    var label: String {
+        switch kind {
+        case .wireguard: return "WG"
+        case .amneziawg: return "AWG"
+        case .openvpn:   return "OVPN"
+        }
+    }
+    var color: Color {
+        switch kind {
+        case .wireguard: return .blue
+        case .amneziawg: return .orange
+        case .openvpn:   return .green
+        }
+    }
     var body: some View {
-        Text(kind == .amneziawg ? "AWG" : "WG")
+        Text(label)
             .font(.caption2.bold())
             .padding(.horizontal, 5).padding(.vertical, 1)
-            .background((kind == .amneziawg ? Color.orange : Color.blue).opacity(0.2))
+            .background(color.opacity(0.2))
             .clipShape(Capsule())
     }
 }
