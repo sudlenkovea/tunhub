@@ -271,6 +271,26 @@ public struct ResolvedPeer: Codable {
     }
 }
 
+/// OpenVPN payload of a resolved spec: the full `.ovpn` with inline secrets already
+/// substituted (ready to write to a root-only temp file) plus credentials/OTP.
+public struct ResolvedOpenVPN: Codable {
+    public var configText: String          // complete .ovpn, secrets inlined
+    public var username: String?
+    public var password: String?
+    public var otp: String?                // pre-entered OTP (static-challenge)
+    public var staticChallenge: OpenVPNStaticChallenge?
+    public var remotes: [OpenVPNRemote]    // for kill-switch endpoint pinning
+    public var dns: [String]               // client-side dhcp-option DNS (if any)
+    public var redirectGateway: Bool
+    public init(configText: String, username: String?, password: String?, otp: String?,
+                staticChallenge: OpenVPNStaticChallenge?, remotes: [OpenVPNRemote],
+                dns: [String], redirectGateway: Bool) {
+        self.configText = configText; self.username = username; self.password = password
+        self.otp = otp; self.staticChallenge = staticChallenge; self.remotes = remotes
+        self.dns = dns; self.redirectGateway = redirectGateway
+    }
+}
+
 public struct ResolvedTunnelSpec: Codable {
     public var id: UUID
     public var name: String
@@ -284,19 +304,22 @@ public struct ResolvedTunnelSpec: Codable {
     public var dnsMode: DNSMode
     public var routes: [IPAddressRange]
     public var awg: AWGParams?
+    public var openvpn: ResolvedOpenVPN?
     public var killSwitch: Bool
     public var peers: [ResolvedPeer]
     public init(id: UUID, name: String, kind: TunnelKind,
                 privateKey: String,
                 addresses: [IPAddressRange], listenPort: UInt16?, mtu: Int?,
                 dnsServers: [String], dnsSearchDomains: [String], dnsMode: DNSMode,
-                routes: [IPAddressRange], awg: AWGParams?, killSwitch: Bool, peers: [ResolvedPeer]) {
+                routes: [IPAddressRange], awg: AWGParams?, killSwitch: Bool, peers: [ResolvedPeer],
+                openvpn: ResolvedOpenVPN? = nil) {
         self.id = id; self.name = name; self.kind = kind
         self.privateKey = privateKey
         self.addresses = addresses; self.listenPort = listenPort; self.mtu = mtu
         self.dnsServers = dnsServers; self.dnsSearchDomains = dnsSearchDomains
         self.dnsMode = dnsMode; self.routes = routes; self.awg = awg
         self.killSwitch = killSwitch; self.peers = peers
+        self.openvpn = openvpn
     }
 }
 

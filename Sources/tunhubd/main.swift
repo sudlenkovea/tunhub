@@ -7,7 +7,11 @@ final class DaemonService: NSObject, TunHubDaemonXPC {
     func startTunnel(_ spec: Data, reply: @escaping (String?) -> Void) {
         do {
             let s = try TunJSON.decoder.decode(ResolvedTunnelSpec.self, from: spec)
-            try TunnelSupervisor.shared.start(spec: s)
+            if s.kind == .openvpn {
+                try OpenVPNSupervisor.shared.start(spec: s)
+            } else {
+                try TunnelSupervisor.shared.start(spec: s)
+            }
             reply(nil)
         } catch {
             reply(error.localizedDescription)
@@ -16,21 +20,20 @@ final class DaemonService: NSObject, TunHubDaemonXPC {
 
     func stopTunnel(_ id: String, reply: @escaping (String?) -> Void) {
         guard let uuid = UUID(uuidString: id) else { reply("bad uuid"); return }
-        do {
-            try TunnelSupervisor.shared.stop(id: uuid)
-            reply(nil)
-        } catch {
-            reply(error.localizedDescription)
-        }
+        // The id lives in exactly one supervisor; each ignores an unknown id.
+        try? TunnelSupervisor.shared.stop(id: uuid)
+        OpenVPNSupervisor.shared.stop(id: uuid)
+        reply(nil)
     }
 
     func stopAll(_ reply: @escaping () -> Void) {
         TunnelSupervisor.shared.stopAll()
+        OpenVPNSupervisor.shared.stopAll()
         reply()
     }
 
     func runtimeStates(_ reply: @escaping (Data) -> Void) {
-        let states = TunnelSupervisor.shared.states()
+        let states = TunnelSupervisor.shared.states() + OpenVPNSupervisor.shared.states()
         reply((try? TunJSON.encoder.encode(states)) ?? Data())
     }
 
