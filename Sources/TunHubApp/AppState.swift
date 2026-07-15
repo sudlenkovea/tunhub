@@ -24,6 +24,14 @@ let applog: FileLog = {
     return FileLog(path: dir.appendingPathComponent("app.log").path)
 }()
 
+/// A request to collect OpenVPN credentials / OTP before connecting.
+struct OVPNCredentialRequest: Identifiable {
+    let id: UUID                 // tunnel id
+    let config: TunnelConfig
+    let needsUsername: Bool
+    let staticChallenge: OpenVPNStaticChallenge?
+}
+
 struct StatSample: Identifiable {
     let id = UUID()
     let t: Date
@@ -56,6 +64,8 @@ final class AppState: ObservableObject {
     // Conflicts on start
     @Published var blockedFindings: [ConflictFinding] = []
     @Published var showConflictSheet = false
+    // OpenVPN credential / OTP prompt
+    @Published var credentialRequest: OVPNCredentialRequest?
 
     let store = TunnelStore()
     let daemon = DaemonClient()
@@ -283,9 +293,27 @@ final class AppState: ObservableObject {
         if !findings.isEmpty && !force {
             blockedFindings = findings   // show, but don't block
         }
+        // OpenVPN may need username/password and/or a one-time OTP before connecting —
+        // ask the user via a sheet; the actual start resumes in submitOVPNCredentials().
+        if config.kind == .openvpn, let profile = config.openvpn, needsCredentialPrompt(config, profile) {
+            applog.info("start", "“\(config.name)”: prompting for OpenVPN credentials/OTP")
+            credentialRequest = OVPNCredentialRequest(
+                id: config.id, config: config,
+                needsUsername: profile.needsUsername || profile.authMode != .cert,
+                staticChallenge: profile.staticChallenge)
+            WindowManager.shared.showMain()   // ensure the sheet has a window to appear in
+            return
+        }
+        try await performStart(config, otp: nil)
+    }
+
+    /// The actual start: resolve → send to the daemon. Kept separate so the OpenVPN
+    /// credential sheet can resume it once the user has entered creds/OTP.
+    func performStart(_ config: TunnelConfig, otp: String?,
+                      ovpnUser: String? = nil, ovpnPass: String? = nil) async throws {
         let spec: ResolvedTunnelSpec
         do {
-            spec = try resolveSpec(config)
+            spec = try resolveSpec(config, otp: otp, ovpnUser: ovpnUser, ovpnPass: ovpnPass)
         } catch {
             applog.error("start", "“\(config.name)”: failed to build spec: \(error.localizedDescription)")
             lastError = "“\(config.name)”: \(error.localizedDescription)"
@@ -295,13 +323,39 @@ final class AppState: ObservableObject {
             try await daemon.startTunnel(spec)
             applog.info("start", "daemon accepted start of “\(config.name)”")
             markConnected(config)
-            // The external IP is checked automatically in poll() once the tunnel is up (has a utun).
         } catch {
             applog.error("start", "daemon rejected “\(config.name)”: \(error.localizedDescription)")
             lastError = "“\(config.name)”: \(error.localizedDescription)"
             throw error
         }
         await poll()
+    }
+
+    private func needsCredentialPrompt(_ config: TunnelConfig, _ profile: OpenVPNProfile) -> Bool {
+        if profile.staticChallenge != nil { return true }   // always ask for a fresh OTP
+        guard profile.needsUsername || profile.authMode != .cert else { return false }
+        let secrets = KeychainService.loadSecrets(tunnelID: config.id)
+        let hasUser = !(secrets?.openvpn["username"]?.isEmpty ?? true)
+        let hasPass = !(secrets?.openvpn["password"]?.isEmpty ?? true)
+        return !(hasUser && hasPass)
+    }
+
+    /// Called by the OpenVPN credential sheet. Persists creds (username always; password if
+    /// asked), then resumes the start with the entered OTP.
+    func submitOVPNCredentials(username: String, password: String, savePassword: Bool, otp: String?) {
+        guard let req = credentialRequest else { return }
+        credentialRequest = nil
+        if req.needsUsername {
+            var s = KeychainService.loadSecrets(tunnelID: req.id) ?? .init(privateKey: "")
+            s.openvpn["username"] = username
+            if savePassword { s.openvpn["password"] = password } else { s.openvpn["password"] = nil }
+            KeychainService.saveSecrets(tunnelID: req.id, s)
+        }
+        Task {
+            try? await performStart(req.config, otp: otp,
+                                    ovpnUser: req.needsUsername ? username : nil,
+                                    ovpnPass: (req.needsUsername && !savePassword) ? password : nil)
+        }
     }
 
     func stop(_ config: TunnelConfig) async {
@@ -344,7 +398,8 @@ final class AppState: ObservableObject {
 
     // MARK: Secrets → spec
 
-    func resolveSpec(_ config: TunnelConfig, otp: String? = nil) throws -> ResolvedTunnelSpec {
+    func resolveSpec(_ config: TunnelConfig, otp: String? = nil,
+                     ovpnUser: String? = nil, ovpnPass: String? = nil) throws -> ResolvedTunnelSpec {
         // One Keychain access for the whole tunnel (a single password prompt).
         // If the combined item is missing, migrate from the old (per-item) scheme.
         guard let secrets = KeychainService.loadSecrets(tunnelID: config.id)
@@ -360,8 +415,8 @@ final class AppState: ObservableObject {
             }
             let resolved = ResolvedOpenVPN(
                 configText: text,
-                username: secrets.openvpn["username"],
-                password: secrets.openvpn["password"],
+                username: ovpnUser ?? secrets.openvpn["username"],
+                password: ovpnPass ?? secrets.openvpn["password"],
                 otp: otp,
                 staticChallenge: profile.staticChallenge,
                 remotes: profile.remotes,

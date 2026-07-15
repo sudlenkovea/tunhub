@@ -276,6 +276,65 @@ struct AppLanguageOption: Identifiable, Hashable {
     }
 }
 
+/// OpenVPN credential / OTP prompt shown at connect time. Saves username (and, if the
+/// user opts in, password) to the Keychain; the OTP is used once and never stored.
+struct OVPNCredentialSheet: View {
+    @EnvironmentObject var state: AppState
+    let request: OVPNCredentialRequest
+    @State private var username = ""
+    @State private var password = ""
+    @State private var otp = ""
+    @State private var savePassword = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Connect “\(request.config.name)”").font(.headline)
+
+            if request.needsUsername {
+                TextField("Username", text: $username)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("Password", text: $password)
+                    .textFieldStyle(.roundedBorder)
+                Toggle("Save login and password", isOn: $savePassword)
+                    .font(.callout)
+            }
+
+            if let sc = request.staticChallenge {
+                Text(sc.text.isEmpty ? String(localized: "One-time code (OTP)") : sc.text)
+                    .font(.caption).foregroundStyle(.secondary)
+                Group {
+                    if sc.echo { TextField("OTP", text: $otp) }
+                    else { SecureField("OTP", text: $otp) }
+                }
+                .textFieldStyle(.roundedBorder)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { state.credentialRequest = nil }
+                    .keyboardShortcut(.cancelAction)
+                Button("Connect") {
+                    state.submitOVPNCredentials(username: username, password: password,
+                                                savePassword: savePassword,
+                                                otp: otp.isEmpty ? nil : otp)
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(request.needsUsername && (username.isEmpty || password.isEmpty))
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+        .onAppear {
+            if let s = KeychainService.loadSecrets(tunnelID: request.id) {
+                username = s.openvpn["username"] ?? ""
+                password = s.openvpn["password"] ?? ""
+                savePassword = !(s.openvpn["password"] ?? "").isEmpty
+            }
+        }
+    }
+}
+
 /// "Launch at login" via SMAppService.mainApp (macOS 13+). No helper/plist needed —
 /// macOS registers the app bundle itself as a login item.
 enum LoginItem {

@@ -96,6 +96,15 @@
 "Install system component (asks for password)" = "Установить системный компонент (запросит пароль)";
 "Copy" = "Копировать";
 
+/* OpenVPN credentials */
+"Connect “%@”" = "Подключить «%@»";
+"Username" = "Логин";
+"Password" = "Пароль";
+"Save login and password" = "Сохранить логин и пароль";
+"One-time code (OTP)" = "Одноразовый код (OTP)";
+"OTP" = "OTP";
+"Connect" = "Подключить";
+
 /* Common */
 "Cancel" = "Отмена";
 "Close" = "Закрыть";

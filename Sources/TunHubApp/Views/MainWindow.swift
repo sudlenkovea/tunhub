@@ -37,6 +37,9 @@ struct MainWindow: View {
             ConflictsSheet(findings: state.blockedFindings,
                            title: "Conflicts blocking start")
         }
+        .sheet(item: $state.credentialRequest) { req in
+            OVPNCredentialSheet(request: req).environmentObject(state)
+        }
         .sheet(isPresented: $showConflictsAll) {
             ConflictsSheet(findings: allFindings, title: "Check all tunnels")
         }
