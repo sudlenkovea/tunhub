@@ -104,6 +104,11 @@
 "One-time code (OTP)" = "Одноразовый код (OTP)";
 "OTP" = "OTP";
 "Connect" = "Подключить";
+"Credentials" = "Учётные данные";
+"Save" = "Сохранить";
+"Forget password" = "Забыть пароль";
+"saved" = "сохранено";
+"OTP is asked at connect" = "OTP спрашивается при подключении";
 
 /* Common */
 "Cancel" = "Отмена";

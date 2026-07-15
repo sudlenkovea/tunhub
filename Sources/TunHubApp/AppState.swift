@@ -331,6 +331,30 @@ final class AppState: ObservableObject {
         await poll()
     }
 
+    // MARK: OpenVPN credentials (savable ahead of time, not only at connect)
+
+    /// Current saved OpenVPN credentials for a tunnel: username + whether a password is stored.
+    func ovpnCredentials(_ config: TunnelConfig) -> (username: String, hasPassword: Bool) {
+        let s = KeychainService.loadSecrets(tunnelID: config.id)
+        return (s?.openvpn["username"] ?? "", !(s?.openvpn["password"] ?? "").isEmpty)
+    }
+
+    /// Save username (and password if non-empty) to the Keychain for an OpenVPN tunnel.
+    func saveOVPNCredentials(_ config: TunnelConfig, username: String, password: String) {
+        var s = KeychainService.loadSecrets(tunnelID: config.id) ?? .init(privateKey: "")
+        s.openvpn["username"] = username
+        if password.isEmpty { s.openvpn["password"] = nil } else { s.openvpn["password"] = password }
+        KeychainService.saveSecrets(tunnelID: config.id, s)
+        applog.info("ovpn", "saved credentials for “\(config.name)” (password: \(password.isEmpty ? "no" : "yes"))")
+    }
+
+    /// Remove the stored password (keeps the username).
+    func forgetOVPNPassword(_ config: TunnelConfig) {
+        guard var s = KeychainService.loadSecrets(tunnelID: config.id) else { return }
+        s.openvpn["password"] = nil
+        KeychainService.saveSecrets(tunnelID: config.id, s)
+    }
+
     private func needsCredentialPrompt(_ config: TunnelConfig, _ profile: OpenVPNProfile) -> Bool {
         if profile.staticChallenge != nil { return true }   // always ask for a fresh OTP
         guard profile.needsUsername || profile.authMode != .cert else { return false }

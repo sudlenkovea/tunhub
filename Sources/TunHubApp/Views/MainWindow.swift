@@ -280,6 +280,10 @@ struct OverviewView: View {
                     .padding(4)
                 }
 
+                if config.kind == .openvpn {
+                    OVPNCredentialsBox(config: config)
+                }
+
                 RoutesBox(config: config)
 
                 GroupBox("Speed (10 min)") {
@@ -330,6 +334,54 @@ struct OverviewView: View {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
         return f.localizedString(for: d, relativeTo: Date())
+    }
+}
+
+/// OpenVPN credentials editor: save the login/password to the Keychain ahead of time so
+/// you aren't prompted at every connect.
+struct OVPNCredentialsBox: View {
+    @EnvironmentObject var state: AppState
+    let config: TunnelConfig
+    @State private var username = ""
+    @State private var password = ""
+    @State private var justSaved = false
+
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Credentials").bold()
+                    Spacer()
+                    if justSaved { Text("saved").font(.caption).foregroundStyle(.green) }
+                }
+                TextField("Username", text: $username).textFieldStyle(.roundedBorder)
+                SecureField("Password", text: $password).textFieldStyle(.roundedBorder)
+                HStack(spacing: 8) {
+                    Button("Save") {
+                        state.saveOVPNCredentials(config, username: username, password: password)
+                        justSaved = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(username.isEmpty)
+                    Button("Forget password") {
+                        state.forgetOVPNPassword(config); password = ""; justSaved = false
+                    }
+                    Spacer()
+                    if config.openvpn?.staticChallenge != nil {
+                        Text("OTP is asked at connect").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(4)
+            .onChange(of: username) { _ in justSaved = false }
+            .onChange(of: password) { _ in justSaved = false }
+        }
+        .onAppear {
+            if let s = KeychainService.loadSecrets(tunnelID: config.id) {
+                username = s.openvpn["username"] ?? ""
+                password = s.openvpn["password"] ?? ""
+            }
+        }
     }
 }
 
