@@ -1,0 +1,132 @@
+/* TunHub — Russian localization.
+   Keys are the English base strings (SwiftUI Text auto-localizes by key).
+   Add more keys here to extend the translation; missing keys fall back to English. */
+
+/* Tray */
+"Open window" = "Открыть окно";
+"System component not installed" = "Системный компонент не установлен";
+"Install…" = "Установить…";
+"No tunnels — import a .conf or ZIP" = "Нет туннелей — импортируйте .conf или ZIP";
+"Stop all" = "Остановить все";
+"Logs" = "Логи";
+"Check daemon status" = "Проверить состояние демона";
+"Reinstall system component…" = "Переустановить системный компонент…";
+"Quit TunHub" = "Выход из TunHub";
+"starting…" = "запускаю…";
+"stopping…" = "останавливаю…";
+"no handshake" = "нет handshake";
+"error" = "ошибка";
+
+/* Main window */
+"Tunnels" = "Туннели";
+"Start" = "Запуск";
+"Stop" = "Стоп";
+"Duplicate" = "Дублировать";
+"Export .conf…" = "Экспорт .conf…";
+"Delete" = "Удалить";
+"New" = "Новый";
+"Import" = "Импорт";
+"Export all (ZIP)" = "Экспорт всех (ZIP)";
+"Check conflicts" = "Проверить конфликты";
+"New tunnel" = "Новый туннель";
+"Select a tunnel or import configs" = "Выберите туннель или импортируйте конфиги";
+"Drag & drop of .conf and .zip is supported" = "Поддерживается drag&drop .conf и .zip";
+"Overview" = "Обзор";
+"Editor" = "Редактор";
+"Status" = "Статус";
+"Interface" = "Интерфейс";
+"Endpoint" = "Endpoint";
+"External IP" = "Внешний IP";
+"Check" = "Проверить";
+"tunnel not running" = "туннель не запущен";
+"checking…" = "проверяю…";
+"failed" = "не удалось";
+"Routes" = "Маршруты";
+"all traffic (default route)" = "весь трафик (default route)";
+
+/* External IP — short inline labels */
+"not routed" = "нет в маршрутах";
+"DNS error" = "ошибка DNS";
+"timeout" = "таймаут";
+"TLS error" = "ошибка TLS";
+"unavailable" = "недоступно";
+
+/* External IP — hover help */
+"Public IP as seen through this tunnel." = "Публичный IP, как его видно через этот туннель.";
+"The IP-check service %@ (%@) is not covered by this tunnel's routes, so it can't be reached through the tunnel. This is expected for a split tunnel." = "Сервис проверки IP %1$@ (%2$@) не входит в маршруты этого туннеля, поэтому через туннель недостижим. Для split-туннеля это нормально.";
+"The service is routed through the tunnel but didn't respond (blocked or down)." = "Сервис маршрутизируется через туннель, но не ответил (заблокирован или недоступен).";
+"Couldn't resolve the IP-check service — DNS may be going outside the tunnel." = "Не удалось разрешить сервис проверки IP — возможно, DNS идёт мимо туннеля.";
+"Timed out reaching the IP-check service." = "Таймаут при обращении к сервису проверки IP.";
+"TLS handshake with the IP-check service failed." = "Сбой TLS-рукопожатия с сервисом проверки IP.";
+"Couldn't reach the IP-check service (blocked or not routed)." = "Не удалось достучаться до сервиса проверки IP (заблокирован или не маршрутизируется).";
+"Traffic (session)" = "Трафик (сессия)";
+"Traffic (month)" = "Трафик (месяц)";
+"System DNS" = "Системный DNS";
+"Speed (10 min)" = "Скорость (10 мин)";
+"Peers" = "Peers";
+"never" = "никогда";
+"none yet" = "ещё не было";
+
+/* Editor */
+"Name" = "Имя";
+"Type" = "Тип";
+"Public key" = "Public key";
+"Private key" = "Приватный ключ";
+"Generate" = "Сгенерировать";
+"Address" = "Адрес";
+"Search domains" = "Поисковые домены";
+"AmneziaWG obfuscation" = "Обфускация AmneziaWG";
+"Presets" = "Пресеты";
+"Options" = "Опции";
+"Kill switch (block traffic outside the tunnel)" = "Kill switch (блокировать трафик мимо туннеля)";
+"Connect on app launch" = "Подключать при запуске приложения";
+"Health check" = "Проверка здоровья";
+"Add peer" = "Добавить peer";
+"Remove peer" = "Удалить peer";
+"Save" = "Сохранить";
+"Revert" = "Отменить";
+"Saved" = "Сохранено";
+"Raw" = "Raw";
+"Show secrets" = "Показать секреты";
+"Reload" = "Перечитать";
+"Apply" = "Применить";
+
+/* Onboarding */
+"Welcome to TunHub" = "Добро пожаловать в TunHub";
+"Install system component (asks for password)" = "Установить системный компонент (запросит пароль)";
+"Copy" = "Копировать";
+
+/* Common */
+"Cancel" = "Отмена";
+"Close" = "Закрыть";
+"Later" = "Позже";
+"Check again" = "Проверить ещё раз";
+"Import tunnels" = "Импорт туннелей";
+"Errors" = "Ошибки";
+"Nothing to import" = "Нечего импортировать";
+"No conflicts found" = "Конфликтов не найдено";
+"Expand all" = "Развернуть всё";
+"Collapse all" = "Свернуть всё";
+
+/* Settings */
+"General" = "Общие";
+"Launch TunHub at login" = "Запускать TunHub при входе в систему";
+"Tunnels marked “Connect on app launch” connect automatically after start." = "Туннели с отметкой «Подключать при запуске приложения» подключаются автоматически.";
+"Security" = "Безопасность";
+"System component" = "Системный компонент";
+"Statistics" = "Статистика";
+"Export traffic to CSV…" = "Экспорт трафика в CSV…";
+"Reinstall / restart daemon…" = "Переустановить / перезапустить демон…";
+
+/* Logs */
+"All" = "Всё";
+"Daemon" = "Демон";
+"App" = "Приложение";
+"Level" = "Уровень";
+"Search…" = "Поиск…";
+"Pause" = "Пауза";
+"Auto-scroll" = "Автоскролл";
+"Copy all" = "Копировать всё";
+"Save to file…" = "Сохранить в файл…";
+"Reveal logs in Finder" = "Показать логи в Finder";
+"Clear screen" = "Очистить экран";

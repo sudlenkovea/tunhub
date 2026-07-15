@@ -1,0 +1,4 @@
+/* TunHub — English base localization.
+   English is the development language; SwiftUI Text uses the literal key when a
+   translation is missing, so this file is intentionally minimal. Add overrides here
+   only if a base string should differ from its key. */

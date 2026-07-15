@@ -1,0 +1,28 @@
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Build output
+dist/
+*.dmg
+*.app/
+
+# Bundled/downloaded cores (built by build.sh)
+cores/
+amneziawg-go/
+wireguard-go/
+*.pkg
+
+# macOS
+.DS_Store
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+
+# Signing / secrets — never commit
+*.p12
+*.mobileprovision
+*.cer
