@@ -82,6 +82,25 @@ mkdir -p "$CORES"
 ( cd "$CORES/wireguard-go"  && GOOS=darwin GOARCH=$ARCH CGO_ENABLED=0 \
     go build -buildvcs=false -trimpath -ldflags "-s -w" -o ../wireguard-go.bin . )
 
+# OpenVPN core (community 2.6.x). We stage the binary and later bundle its non-system
+# dylibs (OpenSSL/lzo/lz4/pkcs11-helper) into the .app so it's self-contained. Uses the
+# Homebrew build of openvpn as the source binary; dylibbundler makes it relocatable.
+if [[ ! -x "$CORES/openvpn" ]]; then
+    echo "    OpenVPN core…"
+    if ! command -v openvpn >/dev/null && command -v brew >/dev/null; then
+        brew list openvpn >/dev/null 2>&1 || brew install openvpn >/dev/null 2>&1 || true
+    fi
+    OVPN_BIN="$(command -v openvpn || true)"
+    [[ -z "$OVPN_BIN" && -x "$(brew --prefix 2>/dev/null)/sbin/openvpn" ]] && OVPN_BIN="$(brew --prefix)/sbin/openvpn"
+    if [[ -n "$OVPN_BIN" && -x "$OVPN_BIN" ]]; then
+        cp "$OVPN_BIN" "$CORES/openvpn"
+    else
+        echo "    warning: openvpn binary not found — OpenVPN tunnels won't run (install: brew install openvpn)"
+    fi
+fi
+# dylibbundler makes the openvpn binary self-contained inside the .app.
+command -v dylibbundler >/dev/null || { command -v brew >/dev/null && brew install dylibbundler >/dev/null 2>&1 || true; }
+
 echo "==> [2/4] Building Swift targets ($CONFIG, $ARCH)"
 # Unique build stamp → app and daemon can tell whether their binaries match.
 STAMP="$(date +%Y%m%d%H%M%S)-$(git -C . rev-parse --short HEAD 2>/dev/null || echo nogit)"
@@ -106,6 +125,17 @@ cp "$BIN/TunHubApp"          "$APP/Contents/MacOS/$APP_NAME"
 cp "$BIN/tunhubd"            "$APP/Contents/MacOS/tunhubd"
 cp "$CORES/amneziawg-go.bin" "$APP/Contents/MacOS/amneziawg-go"
 cp "$CORES/wireguard-go.bin" "$APP/Contents/MacOS/wireguard-go"
+# OpenVPN core + self-contained dylibs.
+if [[ -x "$CORES/openvpn" ]]; then
+    cp "$CORES/openvpn" "$APP/Contents/MacOS/openvpn"
+    mkdir -p "$APP/Contents/Frameworks"
+    if command -v dylibbundler >/dev/null; then
+        dylibbundler -of -cd -b -x "$APP/Contents/MacOS/openvpn" \
+            -d "$APP/Contents/Frameworks" -p "@executable_path/../Frameworks/" >/dev/null
+    else
+        echo "    warning: dylibbundler missing — openvpn may not be self-contained"
+    fi
+fi
 cp Resources/App-Info.plist    "$APP/Contents/Info.plist"
 cp Resources/com.tunhub.daemon.plist        "$APP/Contents/Library/LaunchDaemons/"
 cp Resources/com.tunhub.daemon.system.plist  "$APP/Contents/Library/LaunchDaemons/"
@@ -121,7 +151,16 @@ RUNTIME=()
 if [[ "$IDENTITY" != "-" && "$IDENTITY" != "$DEV_IDENTITY_NAME" ]]; then
     RUNTIME=(--options runtime --timestamp)
 fi
-for b in amneziawg-go wireguard-go tunhubd "$APP_NAME"; do
+# Sign bundled dylibs first (inner-out), then the Mach-O executables, then the bundle.
+if [[ -d "$APP/Contents/Frameworks" ]]; then
+    for dylib in "$APP/Contents/Frameworks"/*.dylib; do
+        [[ -e "$dylib" ]] || continue
+        codesign --force ${RUNTIME[@]+"${RUNTIME[@]}"} --sign "$IDENTITY" "$dylib"
+    done
+fi
+BINARIES=(amneziawg-go wireguard-go tunhubd "$APP_NAME")
+[[ -x "$APP/Contents/MacOS/openvpn" ]] && BINARIES+=(openvpn)
+for b in "${BINARIES[@]}"; do
     codesign --force ${RUNTIME[@]+"${RUNTIME[@]}"} --sign "$IDENTITY" "$APP/Contents/MacOS/$b"
 done
 codesign --force ${RUNTIME[@]+"${RUNTIME[@]}"} --sign "$IDENTITY" "$APP"
