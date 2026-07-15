@@ -344,13 +344,38 @@ final class AppState: ObservableObject {
 
     // MARK: Secrets → spec
 
-    func resolveSpec(_ config: TunnelConfig) throws -> ResolvedTunnelSpec {
+    func resolveSpec(_ config: TunnelConfig, otp: String? = nil) throws -> ResolvedTunnelSpec {
         // One Keychain access for the whole tunnel (a single password prompt).
         // If the combined item is missing, migrate from the old (per-item) scheme.
         guard let secrets = KeychainService.loadSecrets(tunnelID: config.id)
                 ?? KeychainService.migrateLegacySecrets(config: config) else {
             throw AppError("secrets for “\(config.name)” not found in Keychain")
         }
+
+        // OpenVPN: inline the secret blocks back into the config text and attach credentials.
+        if config.kind == .openvpn, let profile = config.openvpn {
+            var text = profile.configText
+            for (tag, material) in secrets.openvpn where tag != "username" && tag != "password" {
+                text = text.replacingOccurrences(of: "##SECRET:\(tag)##", with: material)
+            }
+            let resolved = ResolvedOpenVPN(
+                configText: text,
+                username: secrets.openvpn["username"],
+                password: secrets.openvpn["password"],
+                otp: otp,
+                staticChallenge: profile.staticChallenge,
+                remotes: profile.remotes,
+                dns: profile.dns,
+                redirectGateway: profile.redirectGateway)
+            return ResolvedTunnelSpec(
+                id: config.id, name: config.name, kind: .openvpn, privateKey: "",
+                addresses: [], listenPort: nil, mtu: nil,
+                dnsServers: profile.dns, dnsSearchDomains: profile.searchDomains,
+                dnsMode: profile.redirectGateway ? .global : .disabled,
+                routes: [], awg: nil, killSwitch: config.options.killSwitch, peers: [],
+                openvpn: resolved)
+        }
+
         let pk = secrets.privateKey
         let peers = config.peers.map { p in
             ResolvedPeer(publicKey: p.publicKey,

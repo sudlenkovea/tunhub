@@ -4,7 +4,9 @@ import TunHubShared
 
 struct ImportCandidate: Identifiable {
     let id = UUID()
-    var parsed: ParsedTunnel
+    var config: TunnelConfig
+    var secrets: KeychainService.TunnelSecrets
+    var warnings: [String] = []
     var sourceName: String
     var include: Bool = true
     var findings: [ConflictFinding] = []
@@ -24,7 +26,7 @@ enum ImportService {
             if ext == "zip" {
                 do {
                     let data = try Data(contentsOf: url)
-                    let (c, e) = candidates(fromZip: data, existing: existing + out.map(\.parsed.config))
+                    let (c, e) = candidates(fromZip: data, existing: existing + out.map(\.config))
                     out += c; errors += e
                 } catch { errors.append("\(url.lastPathComponent): \(error.localizedDescription)") }
             } else {
@@ -32,7 +34,7 @@ enum ImportService {
                     let text = try String(contentsOf: url, encoding: .utf8)
                     let name = url.deletingPathExtension().lastPathComponent
                     out.append(try candidate(name: name, text: text,
-                                             existing: existing + out.map(\.parsed.config)))
+                                             existing: existing + out.map(\.config)))
                 } catch let pe as ParseError {
                     errors.append("\(url.lastPathComponent): \(pe.localizedDescription)")
                 } catch {
@@ -58,7 +60,8 @@ enum ImportService {
             // zip-slip and macOS junk
             guard !path.contains(".."), !path.hasPrefix("/"),
                   !path.contains("__MACOSX"), !path.hasSuffix(".DS_Store") else { continue }
-            guard path.lowercased().hasSuffix(".conf"), entry.type == .file else { continue }
+            let lower = path.lowercased()
+            guard (lower.hasSuffix(".conf") || lower.hasSuffix(".ovpn")), entry.type == .file else { continue }
             guard entry.uncompressedSize <= maxEntrySize else {
                 errors.append("\(path): file too large"); continue
             }
@@ -74,7 +77,7 @@ enum ImportService {
             let name = (base as NSString).deletingPathExtension
             do {
                 out.append(try candidate(name: name, text: text,
-                                         existing: existing + out.map(\.parsed.config)))
+                                         existing: existing + out.map(\.config)))
             } catch let pe as ParseError {
                 errors.append("\(base): \(pe.localizedDescription)")
             } catch {
@@ -84,12 +87,39 @@ enum ImportService {
         return (out, errors)
     }
 
+    /// Detect the profile format and dispatch to the right parser.
+    private static func looksLikeOpenVPN(_ text: String) -> Bool {
+        if text.contains("[Interface]") { return false }   // wg-quick
+        let l = text.lowercased()
+        return l.contains("\nremote ") || l.hasPrefix("remote ")
+            || l.contains("<ca>") || l.contains("client\n") || l.contains("\nclient")
+            || l.contains("dev tun") || l.contains("dev tap")
+    }
+
     static func candidate(name: String, text: String, existing: [TunnelConfig]) throws -> ImportCandidate {
-        var parsed = try WGQuickParser.parse(name: uniqueName(name, existing: existing), text: text)
-        parsed.config.name = uniqueName(name, existing: existing)
-        var c = ImportCandidate(parsed: parsed, sourceName: name)
-        c.findings = ConflictChecker.check(candidate: parsed.config, against: existing)
-        return c
+        let unique = uniqueName(name, existing: existing)
+        if looksLikeOpenVPN(text) {
+            let parsed = try OVPNParser.parse(name: unique, text: text)
+            var cfg = TunnelConfig()
+            cfg.name = unique
+            cfg.kind = .openvpn
+            cfg.openvpn = parsed.profile
+            var secrets = KeychainService.TunnelSecrets(privateKey: "")
+            secrets.openvpn = parsed.secrets
+            var c = ImportCandidate(config: cfg, secrets: secrets, warnings: parsed.warnings, sourceName: name)
+            c.findings = ConflictChecker.check(candidate: cfg, against: existing)
+            return c
+        } else {
+            var parsed = try WGQuickParser.parse(name: unique, text: text)
+            parsed.config.name = unique
+            var secrets = KeychainService.TunnelSecrets(privateKey: parsed.privateKey)
+            for p in parsed.config.peers {
+                if let psk = parsed.presharedKeys[p.id] { secrets.psks[p.id.uuidString] = psk }
+            }
+            var c = ImportCandidate(config: parsed.config, secrets: secrets, warnings: parsed.warnings, sourceName: name)
+            c.findings = ConflictChecker.check(candidate: parsed.config, against: existing)
+            return c
+        }
     }
 
     static func uniqueName(_ name: String, existing: [TunnelConfig]) -> String {
@@ -104,12 +134,11 @@ enum ImportService {
     static func commit(_ candidates: [ImportCandidate], store: TunnelStore) throws -> [TunnelConfig] {
         var saved: [TunnelConfig] = []
         for c in candidates where c.include {
-            var cfg = c.parsed.config
-            var secrets = KeychainService.TunnelSecrets(privateKey: c.parsed.privateKey)
-            cfg.interface.privateKeyRef = KeychainService.interfaceRef(cfg.id)
-            for i in cfg.peers.indices {
-                if let psk = c.parsed.presharedKeys[cfg.peers[i].id] {
-                    secrets.psks[cfg.peers[i].id.uuidString] = psk
+            var cfg = c.config
+            var secrets = c.secrets
+            if cfg.kind.isWireGuardFamily {
+                cfg.interface.privateKeyRef = KeychainService.interfaceRef(cfg.id)
+                for i in cfg.peers.indices where secrets.psks[cfg.peers[i].id.uuidString] != nil {
                     cfg.peers[i].presharedKeyRef = KeychainService.pskRef(cfg.id, peerID: cfg.peers[i].id)
                 }
             }

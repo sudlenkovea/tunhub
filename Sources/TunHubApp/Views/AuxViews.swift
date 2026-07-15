@@ -37,19 +37,20 @@ struct ImportPreviewView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Toggle("", isOn: $c.include).labelsHidden()
-                                Text(c.parsed.config.name).bold()
-                                KindBadge(kind: c.parsed.config.kind)
-                                if c.parsed.config.hasDefaultRoute {
+                                Text(c.config.name).bold()
+                                KindBadge(kind: c.config.kind)
+                                if c.config.hasDefaultRoute || c.config.openvpn?.redirectGateway == true {
                                     Text("default route").font(.caption2)
                                         .padding(.horizontal, 4)
                                         .background(Color.purple.opacity(0.2))
                                         .clipShape(Capsule())
                                 }
                                 Spacer()
-                                Text(c.parsed.config.peers.first?.endpoint ?? "")
+                                Text(c.config.peers.first?.endpoint
+                                     ?? c.config.openvpn?.remotes.first.map { "\($0.host):\($0.port)" } ?? "")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
-                            ForEach(c.parsed.warnings, id: \.self) { w in
+                            ForEach(c.warnings, id: \.self) { w in
                                 Label(w, systemImage: "exclamationmark.triangle")
                                     .font(.caption).foregroundStyle(.yellow)
                             }

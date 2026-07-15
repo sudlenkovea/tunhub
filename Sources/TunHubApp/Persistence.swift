@@ -68,6 +68,9 @@ enum KeychainService {
     struct TunnelSecrets: Codable {
         var privateKey: String
         var psks: [String: String] = [:]   // peerID.uuidString → PSK
+        /// OpenVPN material: inline blocks by tag (key/tls-auth/tls-crypt/…) plus optional
+        /// "username" / "password".
+        var openvpn: [String: String] = [:]
     }
 
     private static let secretsService = TunHub.Keychain.secretsService
