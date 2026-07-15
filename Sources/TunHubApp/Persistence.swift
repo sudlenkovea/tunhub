@@ -71,6 +71,20 @@ enum KeychainService {
         /// OpenVPN material: inline blocks by tag (key/tls-auth/tls-crypt/…) plus optional
         /// "username" / "password".
         var openvpn: [String: String] = [:]
+
+        init(privateKey: String, psks: [String: String] = [:], openvpn: [String: String] = [:]) {
+            self.privateKey = privateKey; self.psks = psks; self.openvpn = openvpn
+        }
+
+        // Tolerant decoding: older Keychain items predate `openvpn` (and could predate `psks`).
+        // Swift's synthesized decoder does NOT apply property defaults for missing keys, so we
+        // decode those optionally to keep existing tunnels working after an upgrade.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            privateKey = try c.decode(String.self, forKey: .privateKey)
+            psks = try c.decodeIfPresent([String: String].self, forKey: .psks) ?? [:]
+            openvpn = try c.decodeIfPresent([String: String].self, forKey: .openvpn) ?? [:]
+        }
     }
 
     private static let secretsService = TunHub.Keychain.secretsService
