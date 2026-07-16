@@ -125,6 +125,12 @@
 "saved" = "сохранено";
 "OTP is asked at connect" = "OTP спрашивается при подключении";
 
+/* Quit prompt */
+"Disconnect all tunnels before quitting?" = "Отключить все туннели перед выходом?";
+"Some tunnels are still connected. You can disconnect them now or leave them running." = "Некоторые туннели ещё подключены. Можно отключить их сейчас или оставить работать.";
+"Disconnect and quit" = "Отключить и выйти";
+"Quit, keep running" = "Выйти, оставить включёнными";
+
 /* Common */
 "Cancel" = "Отмена";
 "Close" = "Закрыть";

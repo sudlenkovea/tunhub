@@ -635,6 +635,8 @@ final class AppState: ObservableObject {
 
     var anyUp: Bool { runtime.values.contains { $0.phase == .up } }
     var anyDegraded: Bool { runtime.values.contains { $0.phase == .degraded || $0.phase == .failed } }
+    /// Any tunnel that is connected or on its way (up/degraded/starting) — used to prompt on quit.
+    var anyRunning: Bool { tunnels.contains { isRunning($0) } }
 
     func persistOnQuit() { ledger.persist() }
 }

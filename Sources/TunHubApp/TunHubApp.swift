@@ -85,6 +85,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func closePopover() { popover.performClose(nil) }
+
+    /// On quit, if any tunnel is connected, ask whether to disconnect them first.
+    /// Yes → stop all, then quit. No → quit and leave the tunnels running. Cancel → stay.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard state.anyRunning else {
+            state.persistOnQuit()
+            return .terminateNow
+        }
+        let alert = NSAlert()
+        alert.messageText = NSLocalizedString("Disconnect all tunnels before quitting?",
+                                              comment: "quit prompt title")
+        alert.informativeText = NSLocalizedString(
+            "Some tunnels are still connected. You can disconnect them now or leave them running.",
+            comment: "quit prompt body")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: NSLocalizedString("Disconnect and quit", comment: ""))     // 1000
+        alert.addButton(withTitle: NSLocalizedString("Quit, keep running", comment: ""))       // 1001
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: ""))                   // 1002
+
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:                 // Disconnect and quit
+            Task { @MainActor in
+                await state.stopAll()
+                state.persistOnQuit()
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
+        case .alertSecondButtonReturn:                // Quit, keep tunnels running
+            state.persistOnQuit()
+            return .terminateNow
+        default:                                      // Cancel
+            return .terminateCancel
+        }
+    }
 }
 
 /// Central place to show AppKit-hosted SwiftUI windows (main + logs).
