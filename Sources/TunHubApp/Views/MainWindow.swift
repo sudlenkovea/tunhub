@@ -40,6 +40,17 @@ struct MainWindow: View {
         .sheet(item: $state.credentialRequest) { req in
             OVPNCredentialSheet(request: req).environmentObject(state)
         }
+        .alert(item: $state.connectionFailure) { f in
+            Alert(
+                title: Text("Connection failed"),
+                message: Text(f.message),
+                primaryButton: .default(Text(f.isAuth ? "Re-enter credentials" : "Retry")) {
+                    state.retryConnection(f)
+                },
+                secondaryButton: .cancel(Text("Cancel")) {
+                    state.dismissConnectionFailure(f)
+                })
+        }
         .sheet(isPresented: $showConflictsAll) {
             ConflictsSheet(findings: allFindings, title: "Check all tunnels")
         }

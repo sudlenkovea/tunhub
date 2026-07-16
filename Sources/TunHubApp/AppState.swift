@@ -32,6 +32,15 @@ struct OVPNCredentialRequest: Identifiable {
     let staticChallenge: OpenVPNStaticChallenge?
 }
 
+/// A failed connection surfaced to the user with retry/cancel choices.
+struct ConnectionFailure: Identifiable {
+    let id: UUID                 // tunnel id
+    let config: TunnelConfig
+    let message: String
+    /// Whether the failure looks like bad credentials (→ retry re-prompts login/password).
+    var isAuth: Bool { message.uppercased().contains("AUTH") || message.lowercased().contains("verification") }
+}
+
 struct StatSample: Identifiable {
     let id = UUID()
     let t: Date
@@ -66,6 +75,9 @@ final class AppState: ObservableObject {
     @Published var showConflictSheet = false
     // OpenVPN credential / OTP prompt
     @Published var credentialRequest: OVPNCredentialRequest?
+    // A connection that failed and awaits a user decision (retry / cancel)
+    @Published var connectionFailure: ConnectionFailure?
+    private var reportedFailures: Set<UUID> = []
 
     let store = TunnelStore()
     let daemon = DaemonClient()
@@ -243,6 +255,16 @@ final class AppState: ObservableObject {
             if s.phase == .up, lastPhases[id] != .up, let cfg = tunnels.first(where: { $0.id == id }) {
                 fetchExternalIP(cfg)   // via the utun interface, works even without a default route
             }
+            // A failed connection → surface a retry/cancel prompt (once per failure episode).
+            if s.phase == .failed, !reportedFailures.contains(id),
+               let cfg = tunnels.first(where: { $0.id == id }) {
+                reportedFailures.insert(id)
+                connectionFailure = ConnectionFailure(
+                    id: id, config: cfg,
+                    message: s.errorMessage ?? String(localized: "Connection failed."))
+                WindowManager.shared.showMain()
+            }
+            if s.phase != .failed { reportedFailures.remove(id) }
             lastPhases[id] = s.phase
         }
         for id in lastPhases.keys where newRuntime[id] == nil { lastPhases[id] = nil }
@@ -353,6 +375,24 @@ final class AppState: ObservableObject {
         guard var s = KeychainService.loadSecrets(tunnelID: config.id) else { return }
         s.openvpn["password"] = nil
         KeychainService.saveSecrets(tunnelID: config.id, s)
+    }
+
+    /// Retry a failed connection. For an auth failure, forget the (wrong) saved password so
+    /// the start re-prompts for credentials.
+    func retryConnection(_ f: ConnectionFailure) {
+        connectionFailure = nil
+        reportedFailures.remove(f.id)
+        Task {
+            await stop(f.config)   // clear the daemon's failed entry
+            if f.isAuth, f.config.kind == .openvpn { forgetOVPNPassword(f.config) }
+            try? await start(f.config)
+        }
+    }
+
+    /// Dismiss a failed connection and tidy up the daemon-side failed entry.
+    func dismissConnectionFailure(_ f: ConnectionFailure) {
+        connectionFailure = nil
+        Task { await stop(f.config) }
     }
 
     private func needsCredentialPrompt(_ config: TunnelConfig, _ profile: OpenVPNProfile) -> Bool {

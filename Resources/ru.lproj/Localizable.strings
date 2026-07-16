@@ -105,6 +105,10 @@
 "OTP" = "OTP";
 "Connect" = "Подключить";
 "Credentials" = "Учётные данные";
+"Connection failed" = "Не удалось подключиться";
+"Connection failed." = "Не удалось подключиться.";
+"Re-enter credentials" = "Ввести логин/пароль заново";
+"Retry" = "Повторить";
 "Save" = "Сохранить";
 "Forget password" = "Забыть пароль";
 "saved" = "сохранено";

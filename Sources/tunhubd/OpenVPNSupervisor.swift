@@ -78,7 +78,9 @@ final class OpenVPNSupervisor {
             "--management-hold",
             "--management-query-passwords",
             "--auth-nocache",
-            "--auth-retry", "interact",
+            "--auth-retry", "none",     // bad credentials → clean exit (no retry loop that sends
+                                        // the same wrong creds and makes the status flap)
+            "--connect-retry-max", "3", // don't retry forever on network failures either
             // script-security 1: allow openvpn's OWN built-in ifconfig/route calls (needed to
             // configure the utun) but forbid any user scripts. We also strip script directives
             // in the parser, so no config-supplied script can run.
@@ -200,6 +202,9 @@ final class OpenVPNSupervisor {
     private func scanLog(id: UUID, line: String) {
         // Capture a meaningful error line so the UI can show WHY a connect failed.
         let lower = line.lowercased()
+        if line.contains("AUTH_FAILED") || lower.contains("verification failed") {
+            queue.async { self.running[id]?.lastError = "AUTH_FAILED: authentication failed — check username/password" }
+        }
         if lower.contains("error:") || lower.contains("options error") || line.contains("FATAL")
             || lower.contains("cannot ") || lower.contains("exiting due to") {
             let msg = line.replacingOccurrences(of: #"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d "#,
