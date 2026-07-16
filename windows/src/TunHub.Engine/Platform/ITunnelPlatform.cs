@@ -66,4 +66,7 @@ public sealed class TunnelSecrets
 {
     public string PrivateKey { get; set; } = "";
     public Dictionary<string, string> Psks { get; set; } = new();  // peerId → PSK
+    /// <summary>OpenVPN material: inline blocks by tag (key/tls-auth/tls-crypt/…) plus optional
+    /// "username" / "password".</summary>
+    public Dictionary<string, string> OpenVpn { get; set; } = new();
 }

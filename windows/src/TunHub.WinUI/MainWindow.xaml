@@ -5,82 +5,175 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:TunHub.WinUI">
 
-  <Grid x:Name="Root" Padding="12" RowSpacing="10"
-        Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+  <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
     <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
     </Grid.RowDefinitions>
 
     <!-- Toolbar -->
-    <Grid Grid.Row="0" ColumnSpacing="8">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*" />
-        <ColumnDefinition Width="Auto" />
-        <ColumnDefinition Width="Auto" />
-        <ColumnDefinition Width="Auto" />
-      </Grid.ColumnDefinitions>
-      <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-        <Ellipse x:Name="HelperDot" Width="10" Height="10" Fill="Gray" />
-        <TextBlock x:Name="HelperStatus" VerticalAlignment="Center"
-                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="…" />
-      </StackPanel>
-      <Button Grid.Column="1" x:Name="ImportBtn" Content="Import…" />
-      <Button Grid.Column="2" x:Name="StopAllBtn" Content="Stop all" />
-      <Button Grid.Column="3" x:Name="SettingsBtn" Content="Settings" />
-    </Grid>
+    <CommandBar Grid.Row="0" DefaultLabelPosition="Right" HorizontalAlignment="Left"
+                Background="Transparent">
+      <AppBarButton x:Name="NewBtn" Icon="Add" Label="New" />
+      <AppBarButton x:Name="ImportBtn" Icon="Download" Label="Import" />
+      <AppBarButton x:Name="ExportBtn" Icon="Upload" Label="Export all" />
+      <AppBarButton x:Name="ConflictsBtn" Icon="Find" Label="Check conflicts" />
+      <AppBarButton x:Name="LogsBtn" Icon="AllApps" Label="Logs" />
+      <AppBarButton x:Name="SettingsBtn" Icon="Setting" Label="Settings" />
+    </CommandBar>
+
+    <!-- Helper status strip -->
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Padding="14,2,14,8"
+                VerticalAlignment="Center">
+      <Ellipse x:Name="HelperDot" Width="9" Height="9" Fill="Gray" VerticalAlignment="Center" />
+      <TextBlock x:Name="HelperStatus" VerticalAlignment="Center" FontSize="12"
+                 Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="…" />
+      <Button x:Name="StopAllBtn" Content="Stop all" FontSize="12" Padding="8,2"
+              Margin="12,0,0,0" />
+    </StackPanel>
 
     <!-- Body -->
-    <Grid Grid.Row="1" ColumnSpacing="12">
+    <Grid Grid.Row="2" ColumnSpacing="0" Padding="14,0,14,14">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="300" />
+        <ColumnDefinition Width="240" />
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
 
-      <Border Grid.Column="0" CornerRadius="8" BorderThickness="1"
+      <!-- Sidebar -->
+      <Border Grid.Column="0" CornerRadius="8" BorderThickness="1" Margin="0,0,12,0"
               BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
               Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-        <ListView x:Name="TunnelList" SelectionMode="Single" Padding="4">
-          <ListView.ItemTemplate>
-            <DataTemplate>
-              <Grid ColumnSpacing="10" Padding="4">
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="Auto" />
-                  <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Ellipse Grid.Column="0" Width="10" Height="10" VerticalAlignment="Center"
-                         Fill="{Binding StatusBrush}" />
-                <StackPanel Grid.Column="1">
-                  <TextBlock Text="{Binding Name}" />
-                  <TextBlock Text="{Binding StatusText}" FontSize="11"
-                             Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                </StackPanel>
-              </Grid>
-            </DataTemplate>
-          </ListView.ItemTemplate>
-        </ListView>
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" Text="Tunnels" FontSize="12" Padding="12,10,12,4"
+                     Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+          <ListView Grid.Row="1" x:Name="TunnelList" SelectionMode="Single" Padding="4">
+            <ListView.ItemTemplate>
+              <DataTemplate>
+                <Grid ColumnSpacing="8" Padding="4,6">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <Ellipse Grid.Column="0" Width="9" Height="9" VerticalAlignment="Center"
+                           Fill="{Binding StatusBrush}" />
+                  <TextBlock Grid.Column="1" Text="{Binding Name}" VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis" />
+                  <ProgressRing Grid.Column="2" IsActive="{Binding Busy}"
+                                Visibility="{Binding BusyVisibility}" Width="14" Height="14"
+                                Margin="0,0,4,0" />
+                  <Border Grid.Column="3" CornerRadius="4" Padding="5,1" VerticalAlignment="Center"
+                          Background="{Binding KindBg}">
+                    <TextBlock Text="{Binding KindLabel}" FontSize="10" FontWeight="SemiBold"
+                               Foreground="{Binding KindFg}" />
+                  </Border>
+                </Grid>
+              </DataTemplate>
+            </ListView.ItemTemplate>
+          </ListView>
+        </Grid>
       </Border>
 
-      <ScrollViewer Grid.Column="1">
-        <StackPanel x:Name="DetailPanel" Spacing="10">
-          <TextBlock x:Name="EmptyHint"
-                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                     Text="No tunnels — import a .conf or ZIP" />
-          <TextBlock x:Name="DetailName" FontSize="24" FontWeight="SemiBold" />
+      <!-- Detail -->
+      <Grid Grid.Column="1">
+        <TextBlock x:Name="EmptyHint" VerticalAlignment="Center" HorizontalAlignment="Center"
+                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                   Text="Select a tunnel or import configs" />
+
+        <StackPanel x:Name="DetailPanel" Spacing="8" Visibility="Collapsed">
+          <TextBlock x:Name="DetailName" FontSize="22" FontWeight="SemiBold" />
           <TextBlock x:Name="DetailKind" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Ellipse x:Name="DetailDot" Width="12" Height="12" VerticalAlignment="Center" Fill="Gray" />
-            <TextBlock x:Name="DetailStatus" VerticalAlignment="Center" />
-          </StackPanel>
-          <TextBlock x:Name="DetailTraffic"
-                     Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button x:Name="StartBtn" Content="Start" Style="{ThemeResource AccentButtonStyle}" />
-            <Button x:Name="StopBtn" Content="Stop" />
-            <Button x:Name="DeleteBtn" Content="Delete" />
-          </StackPanel>
+
+          <InfoBar x:Name="FailureBar" IsOpen="False" Severity="Error" IsClosable="True"
+                   Title="Connection failed">
+            <InfoBar.ActionButton>
+              <Button x:Name="RetryBtn" Content="Retry" />
+            </InfoBar.ActionButton>
+          </InfoBar>
+
+          <Pivot x:Name="DetailPivot">
+            <!-- Overview -->
+            <PivotItem Header="Overview">
+              <ScrollViewer>
+                <StackPanel Spacing="10" Padding="0,8,0,0">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Ellipse x:Name="DetailDot" Width="12" Height="12" VerticalAlignment="Center" Fill="Gray" />
+                    <TextBlock x:Name="DetailStatus" VerticalAlignment="Center" />
+                  </StackPanel>
+
+                  <Border CornerRadius="8" BorderThickness="1" Padding="12"
+                          BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                          Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel Spacing="6">
+                      <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="110" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Endpoint" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" x:Name="OvEndpoint" Text="—" />
+                      </Grid>
+                      <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="110" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Routes" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" x:Name="OvRoutes" Text="—" TextWrapping="Wrap" />
+                      </Grid>
+                      <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="110" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="External IP" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                          <TextBlock x:Name="OvExternalIp" Text="—" VerticalAlignment="Center" />
+                          <Button x:Name="CheckIpBtn" Content="Check" FontSize="11" Padding="6,1" />
+                        </StackPanel>
+                      </Grid>
+                      <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="110" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Traffic" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" x:Name="OvTraffic" Text="—" />
+                      </Grid>
+                    </StackPanel>
+                  </Border>
+
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="StartBtn" Content="Start" Style="{ThemeResource AccentButtonStyle}" />
+                    <Button x:Name="StopBtn" Content="Stop" />
+                    <Button x:Name="DeleteBtn" Content="Delete" />
+                  </StackPanel>
+                </StackPanel>
+              </ScrollViewer>
+            </PivotItem>
+
+            <!-- Editor -->
+            <PivotItem Header="Editor">
+              <ScrollViewer>
+                <StackPanel x:Name="EditorHost" Spacing="10" Padding="0,8,0,0" />
+              </ScrollViewer>
+            </PivotItem>
+
+            <!-- Status -->
+            <PivotItem Header="Status">
+              <ScrollViewer>
+                <StackPanel x:Name="StatusHost" Spacing="8" Padding="0,8,0,0" />
+              </ScrollViewer>
+            </PivotItem>
+          </Pivot>
         </StackPanel>
-      </ScrollViewer>
+      </Grid>
     </Grid>
   </Grid>
 </Window>

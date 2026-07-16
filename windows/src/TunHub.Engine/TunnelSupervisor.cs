@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using TunHub.Core;
+using TunHub.Engine.OpenVpn;
 using TunHub.Engine.Platform;
 using TunHub.Engine.Uapi;
 
@@ -29,6 +30,7 @@ public sealed class TunnelSupervisor
     private readonly Dictionary<Guid, (string Name, DateTimeOffset Since)> _starting = new();
     private readonly Dictionary<Guid, string> _stopping = new();
     private readonly Dictionary<Guid, TunnelRuntimeState> _failed = new();
+    private readonly Dictionary<Guid, OpenVpnSession> _openvpn = new();
     private Timer? _statsTimer;
     public bool KillSwitchEnabled { get; private set; } = true;
 
@@ -47,7 +49,7 @@ public sealed class TunnelSupervisor
     {
         lock (_gate)
         {
-            if (_running.ContainsKey(spec.Id)) throw new Exception("tunnel already running");
+            if (_running.ContainsKey(spec.Id) || _openvpn.ContainsKey(spec.Id)) throw new Exception("tunnel already running");
             if (_starting.ContainsKey(spec.Id)) throw new Exception("tunnel already starting");
             _starting[spec.Id] = (spec.Name, DateTimeOffset.Now);
             _failed.Remove(spec.Id);
@@ -55,7 +57,11 @@ public sealed class TunnelSupervisor
         _log.Info("start", $"accepted request “{spec.Name}” → background");
         Task.Run(() =>
         {
-            try { StartCore(spec); }
+            try
+            {
+                if (spec.Kind == TunnelKind.OpenVpn) StartOpenVpn(spec);
+                else StartCore(spec);
+            }
             catch (Exception ex)
             {
                 lock (_gate)
@@ -69,6 +75,16 @@ public sealed class TunnelSupervisor
                 _log.Error("start", $"✕ FAIL “{spec.Name}”: {ex.Message}");
             }
         });
+    }
+
+    private void StartOpenVpn(ResolvedTunnelSpec spec)
+    {
+        var coreExe = _platform.LocateCore(TunnelKind.OpenVpn.CoreBinary())
+                      ?? throw new Exception($"core binary not found: {TunnelKind.OpenVpn.CoreBinary()}");
+        var session = new OpenVpnSession(spec, coreExe, _log);
+        session.Start();
+        lock (_gate) { _starting.Remove(spec.Id); _openvpn[spec.Id] = session; }
+        _log.Info("start", $"✔ OpenVPN “{spec.Name}” launched (driven via management interface)");
     }
 
     private void StartCore(ResolvedTunnelSpec spec)
@@ -136,6 +152,21 @@ public sealed class TunnelSupervisor
 
     public void Stop(Guid id)
     {
+        OpenVpnSession? ov;
+        lock (_gate) _openvpn.TryGetValue(id, out ov);
+        if (ov is not null)
+        {
+            lock (_gate) { ov.IntentionalStop = true; _stopping[id] = ov.Name; }
+            _log.Info("stop", $"■ STOP OpenVPN “{ov.Name}” → shutdown in background");
+            Task.Run(() =>
+            {
+                ov.Stop();
+                lock (_gate) { _openvpn.Remove(id); _stopping.Remove(id); }
+                _log.Info("stop", $"✔ STOPPED “{ov.Name}”");
+            });
+            return;
+        }
+
         RunningTunnel? rt;
         lock (_gate)
         {
@@ -162,8 +193,14 @@ public sealed class TunnelSupervisor
     public void StopAll()
     {
         List<RunningTunnel> all;
-        lock (_gate) { all = _running.Values.ToList(); _running.Clear(); }
+        List<OpenVpnSession> ovs;
+        lock (_gate)
+        {
+            all = _running.Values.ToList(); _running.Clear();
+            ovs = _openvpn.Values.ToList(); _openvpn.Clear();
+        }
         foreach (var rt in all) { rt.IntentionalStop = true; Teardown(rt, killProcess: true); }
+        foreach (var ov in ovs) { try { ov.Stop(); } catch (Exception ex) { _log.Warn("stop", $"ovpn stop: {ex.Message}"); } }
         lock (_gate) RebuildKillSwitchLocked();
         PersistOwnership();
         _log.Info("stop", "✔ all tunnels stopped");
@@ -252,8 +289,10 @@ public sealed class TunnelSupervisor
             foreach (var (id, info) in _starting)
                 if (!_running.ContainsKey(id))
                     outList.Add(new TunnelRuntimeState { Id = id, Name = info.Name, Phase = TunnelPhase.Starting, Since = info.Since });
+            foreach (var ov in _openvpn.Values)
+                outList.Add(ov.Snapshot());
             foreach (var (id, name) in _stopping)
-                if (!_running.ContainsKey(id))
+                if (!_running.ContainsKey(id) && !_openvpn.ContainsKey(id))
                     outList.Add(new TunnelRuntimeState { Id = id, Name = name, Phase = TunnelPhase.Stopping });
             outList.AddRange(_failed.Values);
             return outList;

@@ -44,12 +44,44 @@ public sealed class AppStore
     }
 
     public void SaveSecrets(Guid id, TunnelSecrets secrets) => _secrets.Save(id, secrets);
+    public TunnelSecrets? LoadSecrets(Guid id) => _secrets.Load(id);
 
     /// <summary>Build a resolved spec (with plaintext secrets) to send to the helper.</summary>
     public ResolvedTunnelSpec ResolveSpec(TunnelConfig cfg)
     {
         var secrets = _secrets.Load(cfg.Id)
                       ?? throw new Exception($"secrets for “{cfg.Name}” not found");
+
+        // OpenVPN: inline the redacted secret blocks back into the config text and attach
+        // credentials/OTP (mirrors the macOS resolveSpec). No WireGuard private key involved.
+        if (cfg.Kind == TunnelKind.OpenVpn)
+        {
+            var profile = cfg.OpenVpn ?? throw new Exception("OpenVPN profile missing");
+            var configText = profile.ConfigText;
+            foreach (var (tag, material) in secrets.OpenVpn)
+            {
+                if (tag is "username" or "password" or "otp") continue;
+                configText = configText.Replace($"##SECRET:{tag}##", material);
+            }
+            var resolvedOvpn = new ResolvedOpenVpn
+            {
+                ConfigText = configText,
+                Username = secrets.OpenVpn.TryGetValue("username", out var u) ? u : null,
+                Password = secrets.OpenVpn.TryGetValue("password", out var p2) ? p2 : null,
+                Otp = secrets.OpenVpn.TryGetValue("otp", out var o) ? o : null,
+                StaticChallenge = profile.StaticChallenge,
+                Remotes = profile.Remotes,
+                Dns = profile.Dns,
+                RedirectGateway = profile.RedirectGateway
+            };
+            return new ResolvedTunnelSpec
+            {
+                Id = cfg.Id, Name = cfg.Name, Kind = cfg.Kind, PrivateKey = "",
+                DnsServers = profile.Dns, DnsMode = cfg.EffectiveDnsMode(),
+                KillSwitch = cfg.Options.KillSwitch, OpenVpn = resolvedOvpn
+            };
+        }
+
         var peers = cfg.Peers.Select(p => new ResolvedPeer
         {
             PublicKey = p.PublicKey,
@@ -77,6 +109,9 @@ public sealed class AppStore
             Peers = peers
         };
     }
+
+    /// <summary>Run the cross-platform conflict checker over every stored tunnel.</summary>
+    public List<ConflictFinding> CheckAllConflicts() => ConflictChecker.CheckAll(LoadAll());
 
     public string UniqueName(string name, IReadOnlyList<TunnelConfig> existing)
     {

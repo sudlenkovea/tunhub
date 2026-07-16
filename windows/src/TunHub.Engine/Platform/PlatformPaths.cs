@@ -21,9 +21,12 @@ public static class PlatformPaths
 
     public static string OwnershipFile => Path.Combine(VarDir, "owned.json");
 
+    /// <summary>Locked-down scratch dir for transient OpenVPN config / management-password files.</summary>
+    public static string TempDir => OperatingSystem.IsWindows() ? Path.Combine(WinBase, "tmp") : MacRun;
+
     public static void EnsureDirectories()
     {
-        foreach (var d in new[] { VarDir, RunDir, Path.GetDirectoryName(LogFile)! })
+        foreach (var d in new[] { VarDir, RunDir, TempDir, Path.GetDirectoryName(LogFile)! })
             Directory.CreateDirectory(d);
     }
 }

@@ -36,4 +36,14 @@ public sealed class DaemonClient
         }
         catch { return new(); }
     }
+
+    public async Task<List<LogLine>> RecentLogAsync(int maxLines = 400)
+    {
+        try
+        {
+            var payload = await _ipc.CallAsync(IpcMethod.RecentLog, new RecentLogPayload { MaxLines = maxLines });
+            return payload is null ? new() : TunJson.Decode<List<LogLine>>(payload) ?? new();
+        }
+        catch { return new(); }
+    }
 }

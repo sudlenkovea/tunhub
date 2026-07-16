@@ -67,6 +67,7 @@ public sealed class AppSettings
 {
     public string Language { get; set; } = "system";
     public bool KillSwitchGlobal { get; set; } = true;
+    public bool LaunchAtLogin { get; set; }
 
     private static string Path => System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
