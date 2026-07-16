@@ -211,8 +211,15 @@ struct TunnelDetailView: View {
     var body: some View {
         TabView(selection: $tab) {
             OverviewView(config: config).tabItem { Text("Overview") }.tag(0)
-            // Editor jumps back to Overview when the user reverts or saves.
-            EditorView(original: config, onDone: { tab = 0 }).tabItem { Text("Editor") }.tag(1)
+            // Editor jumps back to Overview when the user cancels or saves; OpenVPN uses its own editor.
+            Group {
+                if config.kind == .openvpn {
+                    OpenVPNEditorView(original: config, onDone: { tab = 0 })
+                } else {
+                    EditorView(original: config, onDone: { tab = 0 })
+                }
+            }
+            .tabItem { Text("Editor") }.tag(1)
             RawConfigView(config: config).tabItem { Text("Raw") }.tag(2)
         }
         .padding()
@@ -409,17 +416,29 @@ struct OVPNCredentialsBox: View {
 /// Collapsible list of the tunnel's effective routes — collapsed by default so a large
 /// route set (e.g. dozens of subnets) doesn't clutter the overview.
 struct RoutesBox: View {
+    @EnvironmentObject var state: AppState
     let config: TunnelConfig
     @State private var expanded = false
 
-    var routes: [IPAddressRange] { config.effectiveRoutes() }
+    /// Config routes for WireGuard; server-pushed runtime routes for OpenVPN.
+    var routes: [String] {
+        let cfgRoutes = config.effectiveRoutes().map(\.canonical)
+        if !cfgRoutes.isEmpty { return cfgRoutes }
+        return state.runtime[config.id]?.routes ?? []
+    }
 
     var body: some View {
         GroupBox {
             DisclosureGroup(isExpanded: $expanded) {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(routes, id: \.canonical) { r in
-                        Text(r.canonical)
+                    if routes.isEmpty {
+                        Text(config.kind == .openvpn
+                             ? String(localized: "Routes appear after the tunnel connects.")
+                             : "—")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(routes, id: \.self) { r in
+                        Text(r)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
                     }
@@ -430,7 +449,7 @@ struct RoutesBox: View {
                 HStack {
                     Text("Routes")
                     Spacer()
-                    Text(config.hasDefaultRoute
+                    Text((config.hasDefaultRoute || config.openvpn?.redirectGateway == true)
                          ? String(localized: "all traffic (default route)")
                          : "\(routes.count)")
                         .foregroundStyle(.secondary)
@@ -501,8 +520,9 @@ struct ConflictsSheet: View {
     let findings: [ConflictFinding]
     let title: String
     @State private var expanded: Set<String> = []
+    // Snapshotted once on appear so the list doesn't recompute/reorder on every background poll.
+    @State private var groups: [FindingGroup] = []
 
-    var groups: [FindingGroup] { findings.grouped }
     var errors: Int { findings.filter { $0.severity == .error }.count }
     var warnings: Int { findings.filter { $0.severity == .warning }.count }
 
@@ -554,6 +574,7 @@ struct ConflictsSheet: View {
         }
         .padding(20)
         .frame(width: 580)
+        .onAppear { groups = findings.grouped }   // compute once when the sheet opens
     }
 }
 

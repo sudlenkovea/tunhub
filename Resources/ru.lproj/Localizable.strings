@@ -106,6 +106,17 @@
 "Connect" = "Подключить";
 "Credentials" = "Учётные данные";
 "Connection failed" = "Не удалось подключиться";
+"Routes appear after the tunnel connects." = "Маршруты появятся после подключения туннеля.";
+"OpenVPN profile" = "Профиль OpenVPN";
+"Remotes" = "Серверы";
+"Auth" = "Аутентификация";
+"Cipher" = "Шифр";
+"Redirect gateway" = "Весь трафик через туннель";
+"certificate" = "сертификат";
+"username / password" = "логин / пароль";
+"certificate + username / password" = "сертификат + логин / пароль";
+"static challenge (asked at connect)" = "статический запрос (при подключении)";
+"The .ovpn profile is read-only — re-import the file to change it." = "Профиль .ovpn только для чтения — переимпортируйте файл, чтобы изменить.";
 "Connection failed." = "Не удалось подключиться.";
 "Re-enter credentials" = "Ввести логин/пароль заново";
 "Retry" = "Повторить";

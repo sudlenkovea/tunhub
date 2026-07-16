@@ -347,10 +347,15 @@ public struct TunnelRuntimeState: Codable, Identifiable {
     public var errorMessage: String?
     public var peers: [PeerRuntime]
     public var since: Date?
+    /// Effective routes actually in force (e.g. server-pushed routes for OpenVPN). Optional
+    /// so it decodes tolerantly across a daemon/app version mismatch window.
+    public var routes: [String]?
     public init(id: UUID, name: String, phase: TunnelPhase, utunName: String?,
-                errorMessage: String?, peers: [PeerRuntime], since: Date?) {
+                errorMessage: String?, peers: [PeerRuntime], since: Date?,
+                routes: [String]? = nil) {
         self.id = id; self.name = name; self.phase = phase; self.utunName = utunName
         self.errorMessage = errorMessage; self.peers = peers; self.since = since
+        self.routes = routes
     }
 
     public var rxTotal: UInt64 { peers.reduce(0) { $0 + $1.rxBytes } }

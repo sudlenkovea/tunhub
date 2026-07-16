@@ -97,6 +97,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
     private var logsWindow: NSWindow?
 
     func showMain() {
+        NSApp.setActivationPolicy(.regular)   // show a Dock icon while a window is open
         NSApp.activate(ignoringOtherApps: true)
         if let w = mainWindow {
             w.makeKeyAndOrderFront(nil); return
@@ -110,6 +111,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
     }
 
     func showLogs() {
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         if let w = logsWindow {
             w.makeKeyAndOrderFront(nil); return
@@ -137,6 +139,12 @@ final class WindowManager: NSObject, NSWindowDelegate {
     // Close just hides the window; the reference is kept for re-showing.
     func windowWillClose(_ notification: Notification) {
         state?.persistOnQuit()
+        // Hide the Dock icon again once no TunHub window remains open (back to menu-bar-only).
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let anyVisible = (self.mainWindow?.isVisible ?? false) || (self.logsWindow?.isVisible ?? false)
+            if !anyVisible { NSApp.setActivationPolicy(.accessory) }
+        }
     }
 }
 

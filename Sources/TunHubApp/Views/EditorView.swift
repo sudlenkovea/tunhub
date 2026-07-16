@@ -2,6 +2,109 @@ import SwiftUI
 import TunHubShared
 
 /// Tunnel editor form. Fields are string drafts; committed with validation on save.
+/// Editor for OpenVPN tunnels: the `.ovpn` profile is read-only (re-import to change it),
+/// but name, credentials, and connect options are editable.
+struct OpenVPNEditorView: View {
+    @EnvironmentObject var state: AppState
+    let original: TunnelConfig
+    var onDone: () -> Void = {}
+
+    @State private var name = ""
+    @State private var autoConnect = false
+    @State private var killSwitch = false
+    @State private var username = ""
+    @State private var password = ""
+    @State private var savedFlash = false
+
+    private var profile: OpenVPNProfile { original.openvpn ?? OpenVPNProfile() }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                GroupBox("General") {
+                    HStack { Text("Name").foregroundStyle(.secondary)
+                        TextField("", text: $name).textFieldStyle(.roundedBorder) }
+                        .padding(4)
+                }
+
+                GroupBox("OpenVPN profile") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        infoRow("Remotes", profile.remotes.map { "\($0.host):\($0.port)/\($0.proto)" }.joined(separator: ", "))
+                        infoRow("Auth", authText)
+                        infoRow("Cipher", profile.cipher ?? profile.dataCiphers.first ?? "—")
+                        infoRow("Redirect gateway", profile.redirectGateway ? "yes" : "no")
+                        if profile.staticChallenge != nil { infoRow("OTP", "static challenge (asked at connect)") }
+                        Text("The .ovpn profile is read-only — re-import the file to change it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(4)
+                }
+
+                GroupBox("Credentials") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("Username", text: $username).textFieldStyle(.roundedBorder)
+                        SecureField("Password", text: $password).textFieldStyle(.roundedBorder)
+                        Text("Leave the password empty to be asked for it on each connect (one-time passwords).")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(4)
+                }
+
+                GroupBox("Options") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("Connect on app launch", isOn: $autoConnect)
+                        Toggle("Kill switch (block traffic outside the tunnel)", isOn: $killSwitch)
+                    }.padding(4)
+                }
+
+                HStack {
+                    if savedFlash { Label("Saved", systemImage: "checkmark").foregroundStyle(.green) }
+                    Spacer()
+                    Button("Cancel") { load(); onDone() }.keyboardShortcut(.cancelAction)
+                    Button("Save") { save(); onDone() }.buttonStyle(.borderedProminent).keyboardShortcut("s")
+                }
+            }
+            .padding(.vertical, 6)
+        }
+        .onAppear { load() }
+    }
+
+    private var authText: String {
+        switch profile.authMode {
+        case .cert: return String(localized: "certificate")
+        case .userPass: return String(localized: "username / password")
+        case .userPassCert: return String(localized: "certificate + username / password")
+        }
+    }
+
+    private func infoRow(_ k: LocalizedStringKey, _ v: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(k).foregroundStyle(.secondary).frame(width: 140, alignment: .leading)
+            Text(v).textSelection(.enabled)
+        }
+    }
+
+    private func load() {
+        name = original.name
+        autoConnect = original.options.autoConnectOnLaunch
+        killSwitch = original.options.killSwitch
+        if let s = KeychainService.loadSecrets(tunnelID: original.id) {
+            username = s.openvpn["username"] ?? ""
+            password = s.openvpn["password"] ?? ""
+        }
+        savedFlash = false
+    }
+
+    private func save() {
+        var cfg = original
+        cfg.name = name.isEmpty ? original.name : name
+        cfg.options.autoConnectOnLaunch = autoConnect
+        cfg.options.killSwitch = killSwitch
+        state.save(cfg)
+        state.saveOVPNCredentials(cfg, username: username, password: password)
+        savedFlash = true
+    }
+}
+
 struct EditorView: View {
     @EnvironmentObject var state: AppState
     let original: TunnelConfig

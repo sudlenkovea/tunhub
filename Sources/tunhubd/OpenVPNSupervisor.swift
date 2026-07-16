@@ -13,6 +13,8 @@ final class RunningOVPN {
     var lastError: String?
     var intentionalStop = false
     var dnsApplied = false
+    var pushedRoutes: [String] = []      // server-pushed routes as "network/prefix"
+    var connectedRemote: String?         // actual "ip:port" we connected to
 
     init(spec: ResolvedTunnelSpec, process: Process, mgmt: OpenVPNManagement) {
         self.spec = spec; self.process = process; self.mgmt = mgmt
@@ -215,24 +217,43 @@ final class OpenVPNSupervisor {
             let name = String(line[range])
             queue.async { self.running[id]?.utun = name }
         }
-        if line.contains("PUSH_REPLY") {
-            // extract every `dhcp-option DNS <ip>`
-            var dns: [String] = []
-            let tokens = line.components(separatedBy: ",")
-            for t in tokens where t.contains("dhcp-option DNS") {
-                let parts = t.split(separator: " ")
-                if let ip = parts.last, IPAddressRange.pton(String(ip)) != nil { dns.append(String(ip)) }
+        // Capture the actual connected remote (for the Endpoint field).
+        if line.contains("Peer Connection Initiated") || line.contains("TCP connection established")
+            || line.contains("UDPv4 link remote") {
+            if let m = line.range(of: #"\[AF_INET6?\]([0-9a-fA-F:.]+):(\d+)"#, options: .regularExpression) {
+                let ep = String(line[m]).replacingOccurrences(of: #"\[AF_INET6?\]"#, with: "", options: .regularExpression)
+                queue.async { self.running[id]?.connectedRemote = ep }
             }
-            if !dns.isEmpty {
-                queue.async {
-                    guard let rt = self.running[id], var ov = rt.spec.openvpn else { return }
-                    // Merge pushed DNS into the effective set (spec is a value type; keep a copy).
-                    ov.dns = Array(Set(ov.dns + dns))
-                    // Note: spec is let; store pushed DNS on a side channel via re-apply.
-                    if rt.phase == .up { self.reapplyDNS(rt, dns: ov.dns, redirect: ov.redirectGateway) }
+        }
+        if line.contains("PUSH_REPLY") {
+            var dns: [String] = []
+            var routes: [String] = []
+            for t in line.components(separatedBy: ",") {
+                let parts = t.split(separator: " ").map(String.init)
+                if t.contains("dhcp-option DNS"), let ip = parts.last, IPAddressRange.pton(ip) != nil {
+                    dns.append(ip)
+                } else if parts.count >= 3, parts[0] == "route", IPAddressRange.pton(parts[1]) != nil {
+                    // "route <net> <mask>" → "net/prefix"
+                    let prefix = Self.maskToPrefix(parts[2])
+                    routes.append("\(parts[1])/\(prefix)")
+                }
+            }
+            queue.async {
+                guard let rt = self.running[id] else { return }
+                if !routes.isEmpty { rt.pushedRoutes = Array(Set(rt.pushedRoutes + routes)).sorted() }
+                if !dns.isEmpty {
+                    let merged = Array(Set((rt.spec.openvpn?.dns ?? []) + dns))
+                    if rt.phase == .up { self.reapplyDNS(rt, dns: merged, redirect: rt.spec.openvpn?.redirectGateway ?? false) }
                 }
             }
         }
+    }
+
+    /// "255.255.255.0" → 24. Best-effort; returns 32 on parse failure.
+    static func maskToPrefix(_ mask: String) -> Int {
+        let octets = mask.split(separator: ".").compactMap { UInt8($0) }
+        guard octets.count == 4 else { return 32 }
+        return octets.reduce(0) { $0 + $1.nonzeroBitCount }
     }
 
     private func reapplyDNS(_ rt: RunningOVPN, dns: [String], redirect: Bool) {
@@ -304,11 +325,14 @@ final class OpenVPNSupervisor {
             var out: [TunnelRuntimeState] = running.values.map { rt in
                 var peer = PeerRuntime()
                 peer.publicKey = rt.spec.openvpn?.remotes.first.map { "\($0.host):\($0.port)" } ?? "openvpn"
+                peer.endpoint = rt.connectedRemote
+                    ?? rt.spec.openvpn?.remotes.first.map { "\($0.host):\($0.port)" }
                 peer.rxBytes = rt.rx; peer.txBytes = rt.tx
                 if rt.phase == .up { peer.lastHandshake = rt.since }
                 return TunnelRuntimeState(id: rt.spec.id, name: rt.spec.name, phase: rt.phase,
                                           utunName: rt.utun, errorMessage: rt.lastError,
-                                          peers: [peer], since: rt.since)
+                                          peers: [peer], since: rt.since,
+                                          routes: rt.pushedRoutes.isEmpty ? nil : rt.pushedRoutes)
             }
             for (id, info) in starting where running[id] == nil {
                 out.append(TunnelRuntimeState(id: id, name: info.name, phase: .starting,
