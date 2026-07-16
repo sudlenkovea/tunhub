@@ -126,12 +126,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 final class WindowManager: NSObject, NSWindowDelegate {
     static let shared = WindowManager()
-    var state: AppState!
+    var state: AppState?
 
     private var mainWindow: NSWindow?
     private var logsWindow: NSWindow?
 
     func showMain() {
+        // state is wired in AppState.init(); if a very early caller beats it, retry shortly.
+        guard let state else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.showMain() }
+            return
+        }
         NSApp.setActivationPolicy(.regular)   // show a Dock icon while a window is open
         NSApp.activate(ignoringOtherApps: true)
         if let w = mainWindow {
@@ -146,6 +151,10 @@ final class WindowManager: NSObject, NSWindowDelegate {
     }
 
     func showLogs() {
+        guard let state else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.showLogs() }
+            return
+        }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         if let w = logsWindow {

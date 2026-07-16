@@ -90,6 +90,9 @@ final class AppState: ObservableObject {
         tunnels = store.loadAll()
         applog.info("app", "loaded tunnels: \(tunnels.count), daemon installed: \(DaemonManager.isEnabled)")
         Notifier.setup()
+        // Wire the window manager NOW (synchronously, before the async task below runs) so an
+        // early checkDaemonVersion() that needs to open the window doesn't hit a nil state.
+        WindowManager.shared.state = self
         startPolling()
         Task {
             await checkDaemonVersion()
