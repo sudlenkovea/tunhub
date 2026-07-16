@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -20,11 +21,19 @@ public sealed partial class MainWindow : Window
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(6) };
     private Dictionary<Guid, TunnelRuntimeState> _runtime = new();
     private readonly HashSet<Guid> _reportedFailures = new();
+    private readonly AppWindow _appWindow;
+
+    /// <summary>Raised when the user closes the window — the app hides it to the tray.</summary>
+    public event Action? HideToTrayRequested;
 
     public MainWindow()
     {
         InitializeComponent();
         Title = "TunHub";
+
+        _appWindow = GetAppWindow();
+        try { _appWindow.SetIcon("Assets/TunHub.ico"); } catch { }
+        _appWindow.Closing += (_, e) => { e.Cancel = true; HideToTrayRequested?.Invoke(); };
 
         TunnelList.ItemsSource = _items;
         Localize();
@@ -54,6 +63,16 @@ public sealed partial class MainWindow : Window
     }
 
     private TunnelItem? Selected => TunnelList.SelectedItem as TunnelItem;
+
+    private AppWindow GetAppWindow()
+    {
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var id = Win32Interop.GetWindowIdFromWindow(hwnd);
+        return AppWindow.GetFromWindowId(id);
+    }
+
+    public void AppWindowShow() => _appWindow.Show();
+    public void AppWindowHide() => _appWindow.Hide();
 
     private void Localize()
     {

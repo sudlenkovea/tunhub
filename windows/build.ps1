@@ -79,10 +79,20 @@ if (Test-Path "$Cores\openvpn\openvpn.exe") {
     Write-Host "    bundled OpenVPN core"
 }
 
+if (-not $env:SKIP_MSI) {
+    Write-Host "==> Building MSI installer (WiX)"
+    if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
+        dotnet tool install --global wix --version 5.0.2 | Out-Null
+        $env:Path += ";$env:USERPROFILE\.dotnet\tools"
+    }
+    $Msi = "dist\TunHub-0.8.0-$Rid.msi"
+    wix build installer\TunHub.wxs -d DistDir=$Dist -arch ($Rid -replace 'win-','') -o $Msi
+    if (Test-Path $Msi) { Write-Host "    MSI: $Msi" }
+}
+
 Write-Host ""
-Write-Host "Done: $Dist\TunHub.exe"
-Write-Host "Register the privileged helper service (run as Administrator):"
-Write-Host "  sc.exe create TunHubHelper binPath= `"$((Resolve-Path "$Dist\tunhub-helper.exe").Path)`" start= auto"
-Write-Host "  sc.exe start TunHubHelper"
-Write-Host "Then run $Dist\TunHub.exe"
-Write-Host "(MSI packaging via WiX — TODO.)"
+Write-Host "Done."
+Write-Host "  * Installer:  dist\TunHub-0.8.0-$Rid.msi  (installs app + registers TunHubHelper service)"
+Write-Host "  * Portable:   $Dist\TunHub.exe  (register the service manually if not using the MSI):"
+Write-Host "      sc.exe create TunHubHelper binPath= `"$((Resolve-Path "$Dist\tunhub-helper.exe" -ErrorAction SilentlyContinue).Path)`" start= auto"
+Write-Host "      sc.exe start TunHubHelper"
