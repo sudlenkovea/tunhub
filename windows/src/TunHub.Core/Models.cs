@@ -3,17 +3,32 @@ namespace TunHub.Core;
 public enum TunnelKind
 {
     WireGuard,
-    AmneziaWg
+    AmneziaWg,
+    OpenVpn
 }
 
 public static class TunnelKindExtensions
 {
-    public static string Label(this TunnelKind kind) =>
-        kind == TunnelKind.WireGuard ? "WireGuard" : "AmneziaWG";
+    public static string Label(this TunnelKind kind) => kind switch
+    {
+        TunnelKind.WireGuard => "WireGuard",
+        TunnelKind.AmneziaWg => "AmneziaWG",
+        TunnelKind.OpenVpn   => "OpenVPN",
+        _ => kind.ToString()
+    };
 
     /// <summary>Core binary for this kind. A single AWG v0.2.x core covers 1.5 &amp; 2.0.</summary>
-    public static string CoreBinary(this TunnelKind kind) =>
-        kind == TunnelKind.WireGuard ? TunHubInfo.Core.WireGuard : TunHubInfo.Core.AmneziaWg;
+    public static string CoreBinary(this TunnelKind kind) => kind switch
+    {
+        TunnelKind.WireGuard => TunHubInfo.Core.WireGuard,
+        TunnelKind.AmneziaWg => TunHubInfo.Core.AmneziaWg,
+        TunnelKind.OpenVpn   => TunHubInfo.Core.OpenVpn,
+        _ => TunHubInfo.Core.WireGuard
+    };
+
+    /// <summary>WireGuard-family tunnels share the userspace-core + UAPI machinery; OpenVPN does not.</summary>
+    public static bool IsWireGuardFamily(this TunnelKind kind) =>
+        kind is TunnelKind.WireGuard or TunnelKind.AmneziaWg;
 }
 
 /// <summary>Reference to a secret held in the OS secret store (never on disk).</summary>
@@ -184,6 +199,7 @@ public sealed class TunnelConfig
     public InterfaceConfig Interface { get; set; } = new();
     public List<PeerConfig> Peers { get; set; } = new();
     public AwgParams? Awg { get; set; }
+    public OpenVpnProfile? OpenVpn { get; set; }
     public TunnelOptions Options { get; set; } = new();
     public TunnelMeta Meta { get; set; } = new();
     public int SchemaVersion { get; set; } = 1;
@@ -244,6 +260,8 @@ public sealed class ResolvedTunnelSpec
     public AwgParams? Awg { get; set; }
     public bool KillSwitch { get; set; }
     public List<ResolvedPeer> Peers { get; set; } = new();
+    /// <summary>Present only for OpenVPN tunnels (config text + credentials + OTP).</summary>
+    public ResolvedOpenVpn? OpenVpn { get; set; }
 }
 
 // MARK: - Runtime state (helper → app)
@@ -268,6 +286,8 @@ public sealed class TunnelRuntimeState
     public string? ErrorMessage { get; set; }
     public List<PeerRuntime> Peers { get; set; } = new();
     public DateTimeOffset? Since { get; set; }
+    /// <summary>Effective routes actually in force (e.g. server-pushed routes for OpenVPN).</summary>
+    public List<string>? Routes { get; set; }
 
     public ulong RxTotal => Peers.Aggregate(0UL, (a, p) => a + p.RxBytes);
     public ulong TxTotal => Peers.Aggregate(0UL, (a, p) => a + p.TxBytes);

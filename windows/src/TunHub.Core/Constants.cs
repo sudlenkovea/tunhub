@@ -21,7 +21,8 @@ public static class TunHubInfo
     /// <summary>Core binaries bundled next to the helper (a single AWG core covers 1.5 &amp; 2.0).</summary>
     public static class Core
     {
-        public const string WireGuard = "wireguard-go";
-        public const string AmneziaWg = "amneziawg-go";
+        public const string WireGuard = "wireguard-go.exe";
+        public const string AmneziaWg = "amneziawg-go.exe";
+        public const string OpenVpn   = "openvpn.exe";
     }
 }
