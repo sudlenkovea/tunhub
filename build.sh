@@ -137,6 +137,7 @@ if [[ -x "$CORES/openvpn" ]]; then
     fi
 fi
 cp Resources/App-Info.plist    "$APP/Contents/Info.plist"
+[[ -f Resources/AppIcon.icns ]] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 cp Resources/com.tunhub.daemon.plist        "$APP/Contents/Library/LaunchDaemons/"
 cp Resources/com.tunhub.daemon.system.plist  "$APP/Contents/Library/LaunchDaemons/"
 # Localizations (en base + ru). SwiftUI Text auto-localizes via these .lproj bundles.

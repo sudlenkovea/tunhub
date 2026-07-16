@@ -88,14 +88,32 @@ enum KeychainService {
     }
 
     private static let secretsService = TunHub.Keychain.secretsService
+    // A SINGLE Keychain item holds every tunnel's secrets (tunnelID → TunnelSecrets). One item
+    // means macOS asks to authorize access at most once per app build, not once per tunnel.
+    private static let vaultAccount = "vault"
 
-    @discardableResult
-    static func saveSecrets(tunnelID: UUID, _ secrets: TunnelSecrets) -> Bool {
-        guard let data = try? JSONEncoder().encode(secrets) else { return false }
+    private static func loadVault() -> [String: TunnelSecrets] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: secretsService,
-            kSecAttrAccount as String: tunnelID.uuidString
+            kSecAttrAccount as String: vaultAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let v = try? JSONDecoder().decode([String: TunnelSecrets].self, from: data) else { return [:] }
+        return v
+    }
+
+    @discardableResult
+    private static func saveVault(_ vault: [String: TunnelSecrets]) -> Bool {
+        guard let data = try? JSONEncoder().encode(vault) else { return false }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: secretsService,
+            kSecAttrAccount as String: vaultAccount
         ]
         let status = SecItemUpdate(query as CFDictionary,
                                    [kSecValueData as String: data] as CFDictionary)
@@ -108,7 +126,31 @@ enum KeychainService {
         return status == errSecSuccess
     }
 
+    @discardableResult
+    static func saveSecrets(tunnelID: UUID, _ secrets: TunnelSecrets) -> Bool {
+        var v = loadVault()
+        v[tunnelID.uuidString] = secrets
+        return saveVault(v)
+    }
+
     static func loadSecrets(tunnelID: UUID) -> TunnelSecrets? {
+        if let s = loadVault()[tunnelID.uuidString] { return s }
+        return migratePerTunnelItem(tunnelID)   // upgrade from the old one-item-per-tunnel scheme
+    }
+
+    static func deleteSecrets(tunnelID: UUID) {
+        var v = loadVault()
+        if v.removeValue(forKey: tunnelID.uuidString) != nil { saveVault(v) }
+        // Also drop any leftover per-tunnel item from the previous scheme.
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: secretsService,
+            kSecAttrAccount as String: tunnelID.uuidString
+        ] as CFDictionary)
+    }
+
+    /// Migrate a secret that was stored under its own per-tunnel item into the shared vault.
+    private static func migratePerTunnelItem(_ tunnelID: UUID) -> TunnelSecrets? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: secretsService,
@@ -120,15 +162,9 @@ enum KeychainService {
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data,
               let s = try? JSONDecoder().decode(TunnelSecrets.self, from: data) else { return nil }
+        _ = saveSecrets(tunnelID: tunnelID, s)   // move into the vault
+        SecItemDelete(query as CFDictionary)      // remove the old per-tunnel item
         return s
-    }
-
-    static func deleteSecrets(tunnelID: UUID) {
-        SecItemDelete([
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: secretsService,
-            kSecAttrAccount as String: tunnelID.uuidString
-        ] as CFDictionary)
     }
 
     /// Migrate the old scheme (separate private key / PSK items) → combined item.
