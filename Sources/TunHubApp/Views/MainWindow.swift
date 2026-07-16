@@ -118,8 +118,12 @@ struct MainWindow: View {
     func openImportPanel() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = [UTType(filenameExtension: "conf") ?? .plainText, .zip]
-        panel.message = "Select .conf files or a ZIP archive of configs"
+        var types = [UTType.zip]
+        for ext in ["conf", "ovpn"] { if let t = UTType(filenameExtension: ext) { types.append(t) } }
+        types.append(.plainText)   // some .ovpn/.conf are typed as plain text
+        panel.allowedContentTypes = types
+        panel.allowsOtherFileTypes = true   // be permissive: config files vary in declared type
+        panel.message = "Select .conf / .ovpn files or a ZIP archive of configs"
         if panel.runModal() == .OK {
             state.importFiles(panel.urls)
         }
@@ -191,14 +195,18 @@ struct ContentUnavailableCompat: View {
 struct TunnelDetailView: View {
     @EnvironmentObject var state: AppState
     let config: TunnelConfig
+    @State private var tab = 0
 
     var body: some View {
-        TabView {
-            OverviewView(config: config).tabItem { Text("Overview") }
-            EditorView(original: config).tabItem { Text("Editor") }
-            RawConfigView(config: config).tabItem { Text("Raw") }
+        TabView(selection: $tab) {
+            OverviewView(config: config).tabItem { Text("Overview") }.tag(0)
+            // Editor jumps back to Overview when the user reverts or saves.
+            EditorView(original: config, onDone: { tab = 0 }).tabItem { Text("Editor") }.tag(1)
+            RawConfigView(config: config).tabItem { Text("Raw") }.tag(2)
         }
         .padding()
+        // Reset to Overview whenever a different tunnel is selected.
+        .id(config.id)
     }
 }
 
@@ -371,6 +379,8 @@ struct OVPNCredentialsBox: View {
                         Text("OTP is asked at connect").font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                Text("Leave the password empty to be asked for it on each connect (one-time passwords).")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             .padding(4)
             .onChange(of: username) { _ in justSaved = false }

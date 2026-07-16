@@ -80,7 +80,8 @@ final class OpenVPNSupervisor {
             "--auth-nocache",
             "--auth-retry", "interact",
             "--script-security", "0",   // never run scripts, even if a config slipped one in
-            "--verb", "3"
+            "--verb", "4",
+            "--mute", "0"               // don't hide errors (the profile's own --mute is stripped)
         ]
         let pipe = Pipe()
         p.standardError = pipe
@@ -194,6 +195,14 @@ final class OpenVPNSupervisor {
 
     /// Parse openvpn's log for the utun device name and pushed DNS.
     private func scanLog(id: UUID, line: String) {
+        // Capture a meaningful error line so the UI can show WHY a connect failed.
+        let lower = line.lowercased()
+        if lower.contains("error:") || lower.contains("options error") || line.contains("FATAL")
+            || lower.contains("cannot ") || lower.contains("exiting due to") {
+            let msg = line.replacingOccurrences(of: #"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d "#,
+                                                with: "", options: .regularExpression)
+            queue.async { self.running[id]?.lastError = msg }
+        }
         if let range = line.range(of: #"utun\d+"#, options: .regularExpression) {
             let name = String(line[range])
             queue.async { self.running[id]?.utun = name }

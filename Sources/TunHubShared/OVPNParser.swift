@@ -130,6 +130,9 @@ public enum OVPNParser {
                 profile.usesInlineCompression = true
                 warnings.append("compression enabled (\(key)) — vulnerable to VORACLE; consider disabling on the server")
                 outLines.append(raw)
+            case "verb", "mute":
+                // Verbosity is controlled by the daemon (so errors aren't hidden by --mute).
+                break
             case "key", "tls-auth", "tls-crypt", "tls-crypt-v2", "pkcs12":
                 // File-based secret reference (not inline). We can't bundle the external file;
                 // warn and keep the directive so the user can inline it instead.

@@ -5,6 +5,7 @@ import TunHubShared
 struct EditorView: View {
     @EnvironmentObject var state: AppState
     let original: TunnelConfig
+    var onDone: () -> Void = {}    // called after Revert/Save to jump back to the status tab
 
     @State private var name = ""
     @State private var kind: TunnelKind = .wireguard
@@ -69,8 +70,9 @@ struct EditorView: View {
                 HStack {
                     if savedFlash { Label("Saved", systemImage: "checkmark").foregroundStyle(.green) }
                     Spacer()
-                    Button("Revert") { load() }
-                    Button("Save") { save() }
+                    Button("Cancel") { load(); onDone() }   // discard changes → back to status
+                        .keyboardShortcut(.cancelAction)
+                    Button("Save") { save(); onDone() }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut("s")
                 }
