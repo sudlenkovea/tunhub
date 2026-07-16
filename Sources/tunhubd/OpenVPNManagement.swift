@@ -37,7 +37,7 @@ final class OpenVPNManagement {
         addr.sun_family = sa_family_t(AF_UNIX)
         let cap = MemoryLayout.size(ofValue: addr.sun_path)   // read before taking &addr.sun_path
         guard path.utf8.count < cap else { Darwin.close(s); return false }
-        path.withCString { cs in
+        _ = path.withCString { cs in
             withUnsafeMutablePointer(to: &addr.sun_path) { raw in
                 raw.withMemoryRebound(to: CChar.self, capacity: cap) { dst in
                     strcpy(dst, cs)

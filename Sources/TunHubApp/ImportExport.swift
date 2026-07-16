@@ -135,7 +135,7 @@ enum ImportService {
         var saved: [TunnelConfig] = []
         for c in candidates where c.include {
             var cfg = c.config
-            var secrets = c.secrets
+            let secrets = c.secrets
             if cfg.kind.isWireGuardFamily {
                 cfg.interface.privateKeyRef = KeychainService.interfaceRef(cfg.id)
                 for i in cfg.peers.indices where secrets.psks[cfg.peers[i].id.uuidString] != nil {

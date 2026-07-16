@@ -79,7 +79,10 @@ final class OpenVPNSupervisor {
             "--management-query-passwords",
             "--auth-nocache",
             "--auth-retry", "interact",
-            "--script-security", "0",   // never run scripts, even if a config slipped one in
+            // script-security 1: allow openvpn's OWN built-in ifconfig/route calls (needed to
+            // configure the utun) but forbid any user scripts. We also strip script directives
+            // in the parser, so no config-supplied script can run.
+            "--script-security", "1",
             "--verb", "4",
             "--mute", "0"               // don't hide errors (the profile's own --mute is stripped)
         ]
