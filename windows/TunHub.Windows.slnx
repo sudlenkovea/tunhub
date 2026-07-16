@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TunHub.Core/TunHub.Core.csproj" />
+    <Project Path="src/TunHub.Engine/TunHub.Engine.csproj" />
+    <Project Path="src/TunHub.Helper/TunHub.Helper.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TunHub.Core.Tests/TunHub.Core.Tests.csproj" />
+  </Folder>
+</Solution>

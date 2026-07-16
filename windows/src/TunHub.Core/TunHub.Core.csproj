@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <!-- Platform-agnostic: no OS APIs here. Shared by app, engine and helper. -->
+    <RootNamespace>TunHub.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pure-managed crypto for X25519 public-key derivation (cross-platform). -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.4.0" />
+  </ItemGroup>
+
+</Project>
