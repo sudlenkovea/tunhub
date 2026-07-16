@@ -11,7 +11,6 @@ $Rid     = if ($env:RID) { $env:RID } else { "win-x64" }
 $Config  = if ($env:CONFIG) { $env:CONFIG } else { "Release" }
 $Dist    = "dist\TunHub"
 $Cores   = ".cores"
-$Shared  = "..\avalonia"
 $AwgRef  = if ($env:AWG_REF) { $env:AWG_REF } else { "v0.2.18" }
 $AwgRepo = "https://github.com/amnezia-vpn/amneziawg-go"
 $WgRepo  = "https://git.zx2c4.com/wireguard-go"
@@ -39,24 +38,46 @@ if (-not (Test-Path "$Cores\wintun.dll")) {
     Copy-Item "$Cores\wintun\wintun\bin\amd64\wintun.dll" "$Cores\wintun.dll" -Force
 }
 
-Write-Host "==> [3/6] Stamping build"
+Write-Host "==> [3/7] Fetching OpenVPN core (openvpn.exe + DLLs)"
+# Drop a community OpenVPN build into .cores\openvpn\ (openvpn.exe plus its OpenSSL/lzo DLLs).
+# Set OPENVPN_ZIP to a URL of a portable zip, or pre-populate .cores\openvpn yourself. If absent,
+# OpenVPN tunnels are skipped (WireGuard/AmneziaWG still work).
+if (-not (Test-Path "$Cores\openvpn\openvpn.exe")) {
+    if ($env:OPENVPN_ZIP) {
+        Invoke-WebRequest -Uri $env:OPENVPN_ZIP -OutFile "$Cores\openvpn.zip"
+        Expand-Archive -Path "$Cores\openvpn.zip" -DestinationPath "$Cores\openvpn-x" -Force
+        $exe = Get-ChildItem -Recurse "$Cores\openvpn-x" -Filter openvpn.exe | Select-Object -First 1
+        if ($exe) {
+            New-Item -ItemType Directory -Force -Path "$Cores\openvpn" | Out-Null
+            Copy-Item (Join-Path $exe.DirectoryName "*") "$Cores\openvpn\" -Recurse -Force
+        }
+    } else {
+        Write-Warning "OpenVPN core not found (.cores\openvpn\openvpn.exe). Set OPENVPN_ZIP or add it manually; skipping."
+    }
+}
+
+Write-Host "==> [4/7] Stamping build"
 $Stamp = "{0}-{1}" -f (Get-Date -Format "yyyyMMddHHmmss"), (git rev-parse --short HEAD 2>$null)
 if (-not $Stamp) { $Stamp = "nogit" }
-$engine = "$Shared\src\TunHub.Engine\EngineHost.cs"
+$engine = "src\TunHub.Engine\EngineHost.cs"
 (Get-Content $engine -Raw) -replace 'public const string Value = ".*?";', "public const string Value = ""$Stamp"";" |
     Set-Content $engine
 Write-Host "    stamp: $Stamp"
 
-Write-Host "==> [4/6] Publishing WinUI app ($Rid)"
+Write-Host "==> [5/7] Publishing WinUI app ($Rid)"
 if (Test-Path $Dist) { Remove-Item -Recurse -Force $Dist }
 dotnet publish src\TunHub.WinUI\TunHub.WinUI.csproj -c $Config -r $Rid --self-contained true -o "$Dist"
 
-Write-Host "==> [5/6] Publishing privileged helper"
-dotnet publish "$Shared\src\TunHub.Helper\TunHub.Helper.csproj" -c $Config -r $Rid --self-contained true -o "$Dist\helper"
+Write-Host "==> [6/7] Publishing privileged helper"
+dotnet publish "src\TunHub.Helper\TunHub.Helper.csproj" -c $Config -r $Rid --self-contained true -o "$Dist\helper"
 Copy-Item "$Dist\helper\tunhub-helper.exe" "$Dist\" -Force
 
-Write-Host "==> [6/6] Bundling cores"
+Write-Host "==> [7/7] Bundling cores"
 Copy-Item "$Cores\amneziawg-go.exe","$Cores\wireguard-go.exe","$Cores\wintun.dll" "$Dist\" -Force
+if (Test-Path "$Cores\openvpn\openvpn.exe") {
+    Copy-Item "$Cores\openvpn\*" "$Dist\" -Force
+    Write-Host "    bundled OpenVPN core"
+}
 
 Write-Host ""
 Write-Host "Done: $Dist\TunHub.exe"

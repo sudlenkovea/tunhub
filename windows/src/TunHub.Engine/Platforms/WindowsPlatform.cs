@@ -136,29 +136,99 @@ public sealed class WindowsPlatform : ITunnelPlatform
     public void ApplyDns(ResolvedTunnelSpec spec, string iface)
     {
         if (spec.DnsServers.Count == 0 || spec.DnsMode.Kind == DnsModeKind.Disabled) return;
-        // MVP: set the tunnel adapter's DNS. Split-DNS via NRPT — TODO.
-        var first = true;
-        foreach (var dns in spec.DnsServers.Where(d => !d.Contains(':')))
+        var v4 = spec.DnsServers.Where(d => !d.Contains(':')).ToList();
+
+        if (spec.DnsMode.Kind == DnsModeKind.Split && spec.DnsMode.MatchDomains.Count > 0)
         {
-            if (first)
+            // Split-DNS: resolve only the match domains through the tunnel via an NRPT rule,
+            // so the two tunnels don't fight over the system resolver (mirrors macOS split DNS).
+            var servers = string.Join("','", v4);
+            foreach (var domain in spec.DnsMode.MatchDomains)
             {
-                Shell.Run("netsh", "interface", "ipv4", "set", "dnsservers", $"name={iface}", "static", dns, "primary");
-                first = false;
+                var ns = NormalizeNrptNamespace(domain);
+                PowerShell($"Add-DnsClientNrptRule -Namespace '{ns}' -NameServers @('{servers}') -Comment 'TunHub:{spec.Id}'");
             }
-            else
-            {
-                Shell.Run("netsh", "interface", "ipv4", "add", "dnsservers", $"name={iface}", dns, "index=2");
-            }
+            return;
+        }
+
+        // Global: set the tunnel adapter's DNS servers directly.
+        var first = true;
+        foreach (var dns in v4)
+        {
+            if (first) { Shell.Run("netsh", "interface", "ipv4", "set", "dnsservers", $"name={iface}", "static", dns, "primary"); first = false; }
+            else Shell.Run("netsh", "interface", "ipv4", "add", "dnsservers", $"name={iface}", dns, "index=2");
         }
     }
 
-    public void RollbackDns(Guid id, string iface) =>
+    public void RollbackDns(Guid id, string iface)
+    {
         Shell.Run("netsh", "interface", "ipv4", "set", "dnsservers", $"name={iface}", "dhcp");
+        // Remove any NRPT rules this tunnel added (matched by the comment tag).
+        PowerShell($"Get-DnsClientNrptRule | Where-Object {{ $_.Comment -eq 'TunHub:{id}' }} | Remove-DnsClientNrptRule -Force -ErrorAction SilentlyContinue");
+    }
+
+    private static string NormalizeNrptNamespace(string domain)
+    {
+        var d = domain.Trim();
+        return d.StartsWith('.') ? d : "." + d;   // NRPT wants a leading dot for suffix matches
+    }
+
+    private static void PowerShell(string script) =>
+        Shell.Run("powershell", "-NoProfile", "-NonInteractive", "-Command", script);
+
+    // MARK: - Kill switch (Windows Firewall)
+
+    // Model: while any kill-switch tunnel is up, the default outbound action is "block", and we
+    // allow only (a) the VPN core processes (so handshakes/tunnel traffic reach the physical NIC),
+    // (b) the pinned server endpoints, (c) loopback and DHCP. If the tunnel drops, the core stops
+    // forwarding and every other app is blocked from the internet — a fail-closed kill switch.
+    private const string FwGroup = "TunHub-KillSwitch";
+    private bool _killApplied;
 
     public void RebuildKillSwitch(IReadOnlyList<ActiveTunnel> active, bool enabled)
     {
-        // TODO: implement with the Windows Filtering Platform (WFP), like WireGuard-for-Windows.
-        _log.Warn("firewall", "kill switch not yet implemented on Windows (WFP TODO)");
+        try
+        {
+            // Always clear our previous rules first (idempotent rebuild).
+            Shell.Run("netsh", "advfirewall", "firewall", "delete", "rule", $"group={FwGroup}");
+
+            if (!enabled || active.Count == 0)
+            {
+                if (_killApplied)
+                {
+                    Shell.Run("netsh", "advfirewall", "set", "allprofiles", "firewallpolicy", "blockinbound,allowoutbound");
+                    _killApplied = false;
+                    _log.Info("firewall", "kill switch disabled (outbound restored)");
+                }
+                return;
+            }
+
+            // Allow the VPN cores to reach the internet directly.
+            foreach (var core in new[] { TunHubInfo.Core.WireGuard, TunHubInfo.Core.AmneziaWg, TunHubInfo.Core.OpenVpn })
+            {
+                var exe = LocateCore(core);
+                if (exe is null) continue;
+                Shell.Run("netsh", "advfirewall", "firewall", "add", "rule", $"name={FwGroup}-core",
+                    $"group={FwGroup}", "dir=out", "action=allow", $"program={exe}", "enable=yes");
+            }
+            // Allow the pinned server endpoints.
+            foreach (var ep in active.SelectMany(a => a.Endpoints))
+            {
+                if (ep.Ip.Contains(':')) continue; // IPv4 endpoints only for now
+                Shell.Run("netsh", "advfirewall", "firewall", "add", "rule", $"name={FwGroup}-ep",
+                    $"group={FwGroup}", "dir=out", "action=allow", $"remoteip={ep.Ip}", "enable=yes");
+            }
+            // Loopback + DHCP so the machine keeps basic connectivity.
+            Shell.Run("netsh", "advfirewall", "firewall", "add", "rule", $"name={FwGroup}-loopback",
+                $"group={FwGroup}", "dir=out", "action=allow", "remoteip=127.0.0.0/8,::1", "enable=yes");
+            Shell.Run("netsh", "advfirewall", "firewall", "add", "rule", $"name={FwGroup}-dhcp",
+                $"group={FwGroup}", "dir=out", "action=allow", "protocol=UDP", "localport=68", "remoteport=67", "enable=yes");
+
+            Shell.Run("netsh", "advfirewall", "set", "allprofiles", "firewallpolicy", "blockinbound,blockoutbound");
+            _killApplied = true;
+            _log.Info("firewall", $"kill switch active ({active.Count} tunnel(s), fail-closed)");
+        }
+        catch (Exception ex) { _log.Error("firewall", ex.Message); }
     }
 
     public string? PhysicalDefaultInterface() => null; // not needed for netsh route pinning
