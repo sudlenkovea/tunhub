@@ -68,9 +68,11 @@ Write-Host "==> [5/7] Publishing WinUI app ($Rid)"
 if (Test-Path $Dist) { Remove-Item -Recurse -Force $Dist }
 dotnet publish src\TunHub.WinUI\TunHub.WinUI.csproj -c $Config -r $Rid --self-contained true -o "$Dist"
 
-Write-Host "==> [6/7] Publishing privileged helper"
-dotnet publish "src\TunHub.Helper\TunHub.Helper.csproj" -c $Config -r $Rid --self-contained true -o "$Dist\helper"
-Copy-Item "$Dist\helper\tunhub-helper.exe" "$Dist\" -Force
+Write-Host "==> [6/7] Publishing privileged helper (into the app folder — shared .NET runtime)"
+# Publish alongside the app so tunhub-helper.exe has its runtime next to it (the base
+# .NET 8 runtime DLLs are identical to the app's and just merge). The service then runs
+# from the top-level folder, not a broken exe-only copy.
+dotnet publish "src\TunHub.Helper\TunHub.Helper.csproj" -c $Config -r $Rid --self-contained true -o "$Dist"
 
 Write-Host "==> [7/7] Bundling cores"
 Copy-Item "$Cores\amneziawg-go.exe","$Cores\wireguard-go.exe","$Cores\wintun.dll" "$Dist\" -Force

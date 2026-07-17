@@ -101,7 +101,8 @@ public sealed class RelayCommand : ICommand
 {
     private readonly Action _action;
     public RelayCommand(Action action) => _action = action;
-    public event EventHandler? CanExecuteChanged;
+    // Always executable — no state changes to raise, so the event is a no-op stub.
+    public event EventHandler? CanExecuteChanged { add { } remove { } }
     public bool CanExecute(object? parameter) => true;
     public void Execute(object? parameter) => _action();
 }

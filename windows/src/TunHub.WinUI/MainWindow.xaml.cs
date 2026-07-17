@@ -465,13 +465,14 @@ public sealed class TunnelItem : INotifyPropertyChanged
     {
         Config = config;
         Name = config.Name;
-        (KindLabel, var bg, var fg) = config.Kind switch
+        (string label, Color bg, Color fg) = config.Kind switch
         {
             TunnelKind.WireGuard => ("WG", Color.FromArgb(255, 0xE6, 0xF1, 0xFB), Color.FromArgb(255, 0x18, 0x5F, 0xA5)),
             TunnelKind.AmneziaWg => ("AWG", Color.FromArgb(255, 0xFA, 0xEE, 0xDA), Color.FromArgb(255, 0x85, 0x4F, 0x0B)),
             TunnelKind.OpenVpn   => ("OVPN", Color.FromArgb(255, 0xE1, 0xF5, 0xEE), Color.FromArgb(255, 0x0F, 0x6E, 0x56)),
             _ => ("?", Colors.LightGray, Colors.Black)
         };
+        KindLabel = label;
         KindBg = new SolidColorBrush(bg);
         KindFg = new SolidColorBrush(fg);
     }
