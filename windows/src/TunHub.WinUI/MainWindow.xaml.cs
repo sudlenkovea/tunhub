@@ -26,6 +26,7 @@ public sealed partial class MainWindow : Window
     private readonly AppWindow _appWindow;
     private Guid _editorForId;               // the tunnel the Editor tab is currently built for
     private bool _helperReachable;
+    private readonly Dictionary<Guid, string> _externalIp = new();   // per-tunnel checked-at-start IP
 
     /// <summary>Raised when the user closes the window — the app hides it to the tray.</summary>
     public event Action? HideToTrayRequested;
@@ -53,7 +54,6 @@ public sealed partial class MainWindow : Window
         StartBtn.Click += async (_, _) => await StartSelectedAsync();
         StopBtn.Click += async (_, _) => await StopSelectedAsync();
         DeleteBtn.Click += (_, _) => DeleteSelected();
-        CheckIpBtn.Click += async (_, _) => await CheckExternalIpAsync();
         RetryBtn.Click += async (_, _) => await StartSelectedAsync();
         InstallHelperBtn.Click += async (_, _) => await InstallHelperAsync();
         DetailTabs.SelectionChanged += (_, _) => UpdateTabVisibility();
@@ -92,7 +92,6 @@ public sealed partial class MainWindow : Window
         StartBtn.Content = Loc.T("Start");
         StopBtn.Content = Loc.T("Stop");
         DeleteBtn.Content = Loc.T("Delete");
-        CheckIpBtn.Content = Loc.T("Check");
         EmptyHint.Text = Loc.T("Select a tunnel or import configs");
         TabOverview.Text = Loc.T("Overview");
         TabEditor.Text = Loc.T("Editor");
@@ -129,16 +128,21 @@ public sealed partial class MainWindow : Window
         DetailDot.Fill = PhaseBrush(phase);
 
         OvEndpoint.Text = s?.Peers.FirstOrDefault()?.Endpoint ?? "—";
-        OvRoutes.Text = (s?.Routes is { Count: > 0 } r)
-            ? string.Join(", ", r)
-            : (cfg.HasDefaultRoute ? Loc.T("all traffic (default route)")
-                                   : string.Join(", ", cfg.EffectiveRoutes().Select(x => x.Canonical)));
+        BuildRoutes(cfg, s);
         OvTraffic.Text = s is null ? "—"
             : $"rx {ByteFormat.Human(s.RxTotal)}   tx {ByteFormat.Human(s.TxTotal)}";
 
         var running = phase is TunnelPhase.Up or TunnelPhase.Degraded or TunnelPhase.Starting;
         StartBtn.IsEnabled = !running;
         StopBtn.IsEnabled = running;
+
+        // External IP: no manual button — check once automatically when the tunnel is up.
+        if (phase is TunnelPhase.Up or TunnelPhase.Degraded)
+        {
+            if (_externalIp.TryGetValue(cfg.Id, out var ip)) OvExternalIp.Text = ip;
+            else { OvExternalIp.Text = Loc.T("checking…"); _externalIp[cfg.Id] = Loc.T("checking…"); _ = CheckExternalIpAsync(cfg); }
+        }
+        else { OvExternalIp.Text = "—"; _externalIp.Remove(cfg.Id); }
 
         // Failure banner + retry (mirrors macOS connectionFailure alert).
         if (phase == TunnelPhase.Failed && s?.ErrorMessage is { Length: > 0 } err)
@@ -159,6 +163,38 @@ public sealed partial class MainWindow : Window
             SelectTab(TabOverview);
         }
         BuildStatus(cfg, s);
+    }
+
+    // Routes: config routes for WG; server-pushed runtime routes for OpenVPN. One per line,
+    // collapsed into an expander when there are many (mirrors the macOS RoutesBox).
+    private void BuildRoutes(TunnelConfig cfg, TunnelRuntimeState? s)
+    {
+        OvRoutesHost.Children.Clear();
+        List<string> routes = s?.Routes is { Count: > 0 } r
+            ? r
+            : cfg.EffectiveRoutes().Select(x => x.Canonical).ToList();
+
+        if (routes.Count == 0)
+        {
+            OvRoutesHost.Children.Add(new TextBlock { Text = cfg.HasDefaultRoute ? Loc.T("all traffic (default route)") : "—" });
+            return;
+        }
+        if (routes.Count == 1)
+        {
+            OvRoutesHost.Children.Add(new TextBlock { Text = routes[0], IsTextSelectionEnabled = true });
+            return;
+        }
+        var lines = new StackPanel { Spacing = 1 };
+        foreach (var route in routes)
+            lines.Children.Add(new TextBlock { Text = route, FontFamily = new FontFamily("Consolas"), FontSize = 12, IsTextSelectionEnabled = true });
+        var exp = new Expander
+        {
+            Header = string.Format(Loc.T("{0} routes"), routes.Count),
+            Content = lines,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+        OvRoutesHost.Children.Add(exp);
     }
 
     private void SelectTab(SelectorBarItem item)
@@ -208,7 +244,10 @@ public sealed partial class MainWindow : Window
         EditorHost.Children.Add(pub);
         EditorHost.Children.Add(addresses);
         EditorHost.Children.Add(dns);
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        var row = new Grid { ColumnSpacing = 10 };
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        Grid.SetColumn(mtu, 0); Grid.SetColumn(listen, 1);
         row.Children.Add(mtu); row.Children.Add(listen);
         EditorHost.Children.Add(row);
 
@@ -511,15 +550,23 @@ public sealed partial class MainWindow : Window
         LoadTunnels();
     }
 
-    private async Task CheckExternalIpAsync()
+    // Auto-check the public IP once the tunnel is up. A split tunnel (no default route) doesn't
+    // carry general traffic, so a generic IP-check can't run through it — show a hint instead of
+    // a misleading value (mirrors the macOS "not routed" behaviour).
+    private async Task CheckExternalIpAsync(TunnelConfig cfg)
     {
-        OvExternalIp.Text = Loc.T("checking…");
-        try
+        string result;
+        if (!cfg.HasDefaultRoute)
         {
-            var ip = await _http.GetStringAsync("https://api.ipify.org");
-            OvExternalIp.Text = ip.Trim();
+            result = Loc.T("split tunnel — not routed");
         }
-        catch { OvExternalIp.Text = Loc.T("failed"); }
+        else
+        {
+            try { result = (await _http.GetStringAsync("https://api.ipify.org")).Trim(); }
+            catch { result = Loc.T("check failed (blocked or no route)"); }
+        }
+        _externalIp[cfg.Id] = result;
+        if (Selected?.Config.Id == cfg.Id) OvExternalIp.Text = result;
     }
 
     private async Task ImportAsync()
@@ -554,7 +601,7 @@ public sealed partial class MainWindow : Window
     private Task CheckConflictsAsync()
     {
         var findings = _store.CheckAllConflicts();
-        var body = new StackPanel { Spacing = 10, Padding = new Thickness(16) };
+        var body = new StackPanel { Spacing = 8, Padding = new Thickness(16) };
 
         if (findings.Count == 0)
         {
@@ -562,27 +609,47 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            foreach (var group in findings.GroupBy(f => f.Severity).OrderByDescending(g => g.Key))
+            // Group by code, most severe first (mirrors the macOS ConflictsSheet grouping).
+            foreach (var group in findings.GroupBy(f => f.Code)
+                                          .OrderByDescending(g => g.Max(f => f.Severity)))
             {
-                body.Children.Add(SectionHeader(group.Key.ToString()));
-                foreach (var f in group)
+                var items = group.ToList();
+                var sev = items.Max(f => f.Severity);
+
+                var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                header.Children.Add(new FontIcon { Glyph = SeverityGlyph(sev), FontSize = 15, Foreground = SeverityBrush(sev) });
+                header.Children.Add(new TextBlock { Text = group.Key, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+                if (items.Count > 1)
+                    header.Children.Add(new Border
+                    {
+                        Background = new SolidColorBrush(Color.FromArgb(40, 128, 128, 128)),
+                        CornerRadius = new CornerRadius(8), Padding = new Thickness(6, 0, 6, 0),
+                        Child = new TextBlock { Text = $"×{items.Count}", FontSize = 11 }
+                    });
+
+                var content = new StackPanel { Spacing = 6 };
+                foreach (var f in items)
                 {
-                    var card = new StackPanel { Spacing = 2, Padding = new Thickness(10),
-                        BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
-                        BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"] };
-                    var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                    head.Children.Add(new FontIcon { Glyph = SeverityGlyph(f.Severity), FontSize = 15, Foreground = SeverityBrush(f.Severity) });
-                    head.Children.Add(new TextBlock { Text = $"{f.Code}: {f.Message}", TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-                    card.Children.Add(head);
+                    var block = new StackPanel { Spacing = 1 };
+                    block.Children.Add(new TextBlock { Text = f.Message, TextWrapping = TextWrapping.Wrap });
                     if (f.TunnelNames.Count > 0)
-                        card.Children.Add(new TextBlock { Text = string.Join(" ↔ ", f.TunnelNames), FontSize = 12, Foreground = Secondary });
+                        block.Children.Add(new TextBlock { Text = string.Join(" ↔ ", f.TunnelNames), FontSize = 12, Foreground = Secondary });
                     if (f.FixHint is { Length: > 0 })
-                        card.Children.Add(new TextBlock { Text = f.FixHint, FontSize = 12, Foreground = Secondary, TextWrapping = TextWrapping.Wrap });
-                    body.Children.Add(card);
+                        block.Children.Add(new TextBlock { Text = "→ " + f.FixHint, FontSize = 12, Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"], TextWrapping = TextWrapping.Wrap });
+                    content.Children.Add(block);
                 }
+
+                body.Children.Add(new Expander
+                {
+                    Header = header,
+                    Content = content,
+                    IsExpanded = items.Count == 1,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch
+                });
             }
         }
-        OpenContentWindow(Loc.T("Check all tunnels"), body, 560, 520);
+        OpenContentWindow(Loc.T("Check all tunnels"), body, 580, 560);
         return Task.CompletedTask;
     }
 

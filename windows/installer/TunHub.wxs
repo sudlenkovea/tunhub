@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- TunHub for Windows — MSI package (WiX v4/v5). Build on Windows only:
-       wix build installer\TunHub.wxs -d DistDir=dist\TunHub -o dist\TunHub-0.8.1.msi
+<!-- TunHub for Windows — MSI package (WiX v5). Build on Windows only:
+       wix build installer\TunHub.wxs -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext ^
+                 -d DistDir=dist\TunHub -o dist\TunHub-0.8.1.msi
      DistDir is the publish output from build.ps1 (WinUI app + helper + bundled cores). -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <Package Name="TunHub"
            Manufacturer="TunHub"
@@ -11,11 +14,28 @@
            Scope="perMachine"
            Compressed="yes">
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of TunHub is already installed." />
+    <!-- In-place upgrade: remove the old version early (so running files aren't locked), and
+         allow re-installing the same version (handy for dev rebuilds). -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of TunHub is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <Icon Id="TunHubIcon" SourceFile="$(var.DistDir)\Assets\TunHub.ico" />
     <Property Id="ARPPRODUCTICON" Value="TunHubIcon" />
+
+    <!-- Close a running TunHub before install/upgrade so its files aren't in use. The tray keeps
+         the process alive after the window is closed, so terminate it if it doesn't exit. -->
+    <util:CloseApplication Id="CloseTunHub"
+                           Target="TunHub.exe"
+                           CloseMessage="yes"
+                           TerminateProcess="0"
+                           RebootPrompt="no"
+                           Description="TunHub is running. Setup will close it to continue." />
+
+    <!-- Installer UI with a folder-selection page. -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="installer\license.rtf" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="TunHub" />

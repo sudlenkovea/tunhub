@@ -120,10 +120,14 @@ if (-not $env:SKIP_MSI) {
         dotnet tool install --global wix --version 5.0.2 | Out-Null
         $env:Path += ";$env:USERPROFILE\.dotnet\tools"
     }
+    # Extensions (pinned to the WiX 5 line): UI = folder-selection dialogs, Util = CloseApplication.
+    wix extension add -g WixToolset.UI.wixext/5.0.2   2>$null | Out-Null
+    wix extension add -g WixToolset.Util.wixext/5.0.2 2>$null | Out-Null
     $Msi = "dist\TunHub-0.8.1-$Rid.msi"
     # Absolute DistDir: WiX resolves -d paths relative to the .wxs file (installer\), not the cwd.
     $DistAbs = (Resolve-Path $Dist).Path
-    wix build installer\TunHub.wxs -d DistDir="$DistAbs" -arch ($Rid -replace 'win-','') -o $Msi
+    wix build installer\TunHub.wxs -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext `
+        -d DistDir="$DistAbs" -arch ($Rid -replace 'win-','') -o $Msi
     if (Test-Path $Msi) { Write-Host "    MSI: $Msi" }
 }
 

@@ -148,18 +148,15 @@
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="110" /><ColumnDefinition Width="*" />
                       </Grid.ColumnDefinitions>
-                      <TextBlock Grid.Column="0" Text="Routes" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                      <TextBlock Grid.Column="1" x:Name="OvRoutes" Text="—" TextWrapping="Wrap" />
+                      <TextBlock Grid.Column="0" Text="Routes" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Top" />
+                      <StackPanel Grid.Column="1" x:Name="OvRoutesHost" Spacing="2" />
                     </Grid>
                     <Grid ColumnSpacing="10">
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="110" /><ColumnDefinition Width="*" />
                       </Grid.ColumnDefinitions>
-                      <TextBlock Grid.Column="0" Text="External IP" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                        <TextBlock x:Name="OvExternalIp" Text="—" VerticalAlignment="Center" IsTextSelectionEnabled="True" />
-                        <Button x:Name="CheckIpBtn" Content="Check" FontSize="11" Padding="6,1" />
-                      </StackPanel>
+                      <TextBlock Grid.Column="0" Text="External IP" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Top" />
+                      <TextBlock Grid.Column="1" x:Name="OvExternalIp" Text="—" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                     </Grid>
                     <Grid ColumnSpacing="10">
                       <Grid.ColumnDefinitions>
@@ -180,8 +177,10 @@
             </ScrollViewer>
 
             <!-- Editor -->
-            <ScrollViewer x:Name="EditorPane" Visibility="Collapsed">
-              <StackPanel x:Name="EditorHost" Spacing="12" Padding="0,4,4,0" />
+            <ScrollViewer x:Name="EditorPane" Visibility="Collapsed"
+                          HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
+              <StackPanel x:Name="EditorHost" Spacing="12" Padding="0,4,12,0"
+                          HorizontalAlignment="Stretch" />
             </ScrollViewer>
 
             <!-- Status -->

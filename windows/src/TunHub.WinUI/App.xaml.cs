@@ -134,8 +134,12 @@ public partial class App : Application
             }
         }
         catch { /* fall through to exit */ }
-        _tray?.Dispose();
-        Exit();
+        try { _tray?.Dispose(); } catch { }
+        try { _window?.Close(); } catch { }
+        // Application.Exit() alone is unreliable while the tray icon + poll timer keep the
+        // message loop alive, so terminate the process for certain.
+        try { Exit(); } catch { }
+        Environment.Exit(0);
     }
 }
 

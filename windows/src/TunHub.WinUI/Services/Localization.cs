@@ -117,7 +117,11 @@ public static class Loc
             ["OTP is asked at connect"] = "OTP спрашивается при подключении",
             ["System component not running"] = "Системный компонент не запущен",
             ["TunHub needs a background service to manage tunnels."] = "TunHub нужен фоновый сервис для управления туннелями.",
-            ["Install system component"] = "Установить системный компонент"
+            ["Install system component"] = "Установить системный компонент",
+            ["{0} routes"] = "{0} маршрутов",
+            ["split tunnel — not routed"] = "split-туннель — не маршрутизируется",
+            ["check failed (blocked or no route)"] = "проверка не удалась (заблокировано / нет маршрута)",
+            ["checking…"] = "проверяю…"
         }
     };
 }
