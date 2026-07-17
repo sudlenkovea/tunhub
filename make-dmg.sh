@@ -28,12 +28,22 @@ cp -R "$DIST/$APP_NAME.app" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 
 echo "==> Creating compressed .dmg…"
-TMP_DMG="$DIST/.$APP_NAME.tmp.dmg"
-rm -f "$TMP_DMG"
-hdiutil create -srcfolder "$STAGE" -volname "$VOLNAME" \
-    -fs HFS+ -format UDRW -ov "$TMP_DMG" >/dev/null
-hdiutil convert "$TMP_DMG" -format UDZO -imagekey zlib-level=9 -ov -o "$DMG" >/dev/null
-rm -f "$TMP_DMG"
+# Detach any stale volume left mounted from a previous run — a mounted UDRW image is the
+# usual cause of hdiutil's "Resource busy".
+for v in /Volumes/"$VOLNAME"*; do
+    [[ -d "$v" ]] && hdiutil detach "$v" -force >/dev/null 2>&1 || true
+done
+rm -f "$DMG"
+# One-step compressed (UDZO) image straight from the staging folder — no intermediate
+# read-write image is created or mounted, which avoids the "Resource busy" flakiness.
+tries=0
+until hdiutil create -volname "$VOLNAME" -srcfolder "$STAGE" \
+        -fs HFS+ -format UDZO -ov "$DMG" >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    [[ $tries -ge 3 ]] && { echo "error: hdiutil create failed after $tries attempts"; exit 1; }
+    echo "    hdiutil busy — retrying in 3s ($tries/3)…"
+    sleep 3
+done
 rm -rf "$STAGE"
 
 # Sign the disk image if a real identity is provided.
