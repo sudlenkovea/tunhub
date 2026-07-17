@@ -125,6 +125,13 @@
 "saved" = "сохранено";
 "OTP is asked at connect" = "OTP спрашивается при подключении";
 
+/* Toolbar tooltips */
+"New tunnel" = "Новый туннель";
+"Import .conf, .ovpn or ZIP" = "Импорт .conf, .ovpn или ZIP";
+"Export all tunnels as a ZIP" = "Экспортировать все туннели в ZIP";
+"Check all tunnels for route/DNS conflicts" = "Проверить все туннели на конфликты маршрутов/DNS";
+"Open the log window" = "Открыть окно логов";
+
 /* Quit prompt */
 "Disconnect all tunnels before quitting?" = "Отключить все туннели перед выходом?";
 "Some tunnels are still connected. You can disconnect them now or leave them running." = "Некоторые туннели ещё подключены. Можно отключить их сейчас или оставить работать.";

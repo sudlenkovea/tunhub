@@ -138,16 +138,15 @@ final class WindowManager: NSObject, NSWindowDelegate {
             return
         }
         NSApp.setActivationPolicy(.regular)   // show a Dock icon while a window is open
-        NSApp.activate(ignoringOtherApps: true)
         if let w = mainWindow {
-            w.makeKeyAndOrderFront(nil); return
+            activate(w); return
         }
         let w = makeWindow(title: "TunHub",
                            size: NSSize(width: 900, height: 560),
                            content: MainWindow().environmentObject(state))
         w.setFrameAutosaveName("TunHubMain")
         mainWindow = w
-        w.makeKeyAndOrderFront(nil)
+        activate(w)
     }
 
     func showLogs() {
@@ -156,16 +155,29 @@ final class WindowManager: NSObject, NSWindowDelegate {
             return
         }
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
         if let w = logsWindow {
-            w.makeKeyAndOrderFront(nil); return
+            activate(w); return
         }
         let w = makeWindow(title: "TunHub Logs",
                            size: NSSize(width: 820, height: 460),
                            content: LogView().environmentObject(state))
         w.setFrameAutosaveName("TunHubLogs")
         logsWindow = w
+        activate(w)
+    }
+
+    /// Bring the app+window fully to the foreground. From an accessory (menu-bar) app the
+    /// activation right after switching to `.regular` often doesn't "stick" — the window becomes
+    /// key (colored traffic lights) but the app stays inactive, so NSVisualEffectView materials
+    /// render in their desaturated inactive state (the window looks greyed-out). Re-asserting the
+    /// activation on the next runloop tick fixes it.
+    private func activate(_ w: NSWindow) {
         w.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            w.makeKeyAndOrderFront(nil)
+        }
     }
 
     private func makeWindow(title: String, size: NSSize, content: some View) -> NSWindow {

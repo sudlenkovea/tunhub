@@ -92,25 +92,30 @@ struct MainWindow: View {
             Button {
                 newTunnel()
             } label: { Label("New", systemImage: "plus") }
+            .help("New tunnel")
 
             Button {
                 openImportPanel()
             } label: { Label("Import", systemImage: "square.and.arrow.down") }
+            .help("Import .conf, .ovpn or ZIP")
 
             Button {
                 exportAll()
             } label: { Label("Export all (ZIP)", systemImage: "square.and.arrow.up") }
             .disabled(state.tunnels.isEmpty)
+            .help("Export all tunnels as a ZIP")
 
             Button {
                 allFindings = state.checkAllConflicts()
                 showConflictsAll = true
             } label: { Label("Check conflicts", systemImage: "checkmark.shield") }
             .disabled(state.tunnels.count < 2)
+            .help("Check all tunnels for route/DNS conflicts")
 
             Button {
                 WindowManager.shared.showLogs()
             } label: { Label("Logs", systemImage: "text.alignleft") }
+            .help("Open the log window")
         }
     }
 
