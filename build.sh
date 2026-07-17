@@ -146,6 +146,26 @@ for lproj in Resources/*.lproj; do
     cp -R "$lproj" "$APP/Contents/Resources/"
 done
 
+# Third-party license texts (MIT/GPLv2 require the notice to ship with the binaries).
+LIC="$APP/Contents/Resources/licenses"
+mkdir -p "$LIC"
+[[ -f "$CORES/wireguard-go/LICENSE" ]] && cp "$CORES/wireguard-go/LICENSE" "$LIC/wireguard-go-LICENSE.txt"
+awgl="$(ls "$CORES"/amneziawg-go/LICENSE* 2>/dev/null | head -1 || true)"
+[[ -n "$awgl" ]] && cp "$awgl" "$LIC/amneziawg-go-LICENSE.txt"
+# OpenVPN (+ OpenSSL/lzo) license files from the Homebrew keg it was staged from.
+if command -v brew >/dev/null; then
+    for pkg in openvpn openssl@3 lzo; do
+        pfx="$(brew --prefix "$pkg" 2>/dev/null || true)"
+        [[ -z "$pfx" ]] && continue
+        while IFS= read -r f; do
+            [[ -f "$f" ]] && cp "$f" "$LIC/${pkg//@/}-$(basename "$f")"
+        done < <(find "$pfx" -maxdepth 3 -type f \( -iname '*licen*' -o -iname 'copying*' -o -iname '*gpl*' \) 2>/dev/null | head -3)
+    done
+fi
+[[ -f LICENSE ]] && cp LICENSE "$LIC/TunHub-LICENSE.txt"
+[[ -f THIRD-PARTY-NOTICES.md ]] && cp THIRD-PARTY-NOTICES.md "$LIC/"
+echo "    staged third-party licenses → Contents/Resources/licenses"
+
 echo "==> [4/4] Codesigning (identity: $IDENTITY)"
 # hardened runtime + timestamp only for a real Developer ID signature.
 RUNTIME=()

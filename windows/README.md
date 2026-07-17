@@ -39,15 +39,18 @@ WinUI 3 builds only on Windows.
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-The script builds the Go cores for windows/amd64, fetches `wintun.dll`, optionally stages the
-OpenVPN core, stamps the build, publishes the WinUI app + helper (self-contained) into
-`dist\TunHub`, and builds an **MSI** (`dist\TunHub-0.8.1-win-x64.msi`) via WiX that installs
-the app, registers the `TunHubHelper` service and adds a Start-menu shortcut. Set `SKIP_MSI=1`
-for just the portable folder.
+The script builds the Go cores for windows/amd64, fetches `wintun.dll`, downloads and
+extracts the OpenVPN core, stamps the build, publishes the WinUI app + helper (self-contained)
+into `dist\TunHub`, bundles third-party license texts into `dist\TunHub\licenses\`, and builds
+an **MSI** (`dist\TunHub-0.8.1-win-x64.msi`) via WiX that installs the app, registers the
+`TunHubHelper` service and adds a Start-menu shortcut. Set `SKIP_MSI=1` for just the portable
+folder.
 
-OpenVPN core: drop a community `openvpn.exe` (+ its OpenSSL/lzo DLLs) into `.cores\openvpn\`,
-or set `OPENVPN_ZIP` to a portable-zip URL. Without it, OpenVPN tunnels are skipped;
-WireGuard / AmneziaWG still work.
+OpenVPN core: the official community MSI (`openvpn-latest-stable-amd64.msi`) is downloaded and
+administratively extracted (`msiexec /a`, no install) to stage `openvpn.exe` + its DLLs. Override
+with `OPENVPN_MSI` (a different MSI URL) or `OPENVPN_ZIP` (a portable zip), or pre-populate
+`.cores\openvpn\`. OpenVPN is GPLv2 and shipped unmodified as a separate process — see
+[`../THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md).
 
 The shared libraries (`TunHub.Core`, `TunHub.Engine`) also build and unit-test on macOS/Linux
 (`dotnet test tests/TunHub.Core.Tests`) — only the WinUI UI layer requires Windows.

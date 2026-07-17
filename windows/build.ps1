@@ -39,20 +39,39 @@ if (-not (Test-Path "$Cores\wintun.dll")) {
 }
 
 Write-Host "==> [3/7] Fetching OpenVPN core (openvpn.exe + DLLs)"
-# Drop a community OpenVPN build into .cores\openvpn\ (openvpn.exe plus its OpenSSL/lzo DLLs).
-# Set OPENVPN_ZIP to a URL of a portable zip, or pre-populate .cores\openvpn yourself. If absent,
-# OpenVPN tunnels are skipped (WireGuard/AmneziaWG still work).
+# The community OpenVPN Windows build (GPLv2) is downloaded as the official MSI and
+# administratively extracted (no install), then its bin\ (openvpn.exe + OpenSSL/lzo DLLs)
+# and license files are staged into .cores\openvpn\. We run it as a separate process, so
+# this is mere aggregation — TunHub stays MIT while shipping the unmodified GPLv2 binary.
+# Overrides: OPENVPN_MSI (a different MSI URL) or OPENVPN_ZIP (a portable zip).
 if (-not (Test-Path "$Cores\openvpn\openvpn.exe")) {
+    New-Item -ItemType Directory -Force -Path "$Cores\openvpn" | Out-Null
     if ($env:OPENVPN_ZIP) {
         Invoke-WebRequest -Uri $env:OPENVPN_ZIP -OutFile "$Cores\openvpn.zip"
         Expand-Archive -Path "$Cores\openvpn.zip" -DestinationPath "$Cores\openvpn-x" -Force
         $exe = Get-ChildItem -Recurse "$Cores\openvpn-x" -Filter openvpn.exe | Select-Object -First 1
-        if ($exe) {
-            New-Item -ItemType Directory -Force -Path "$Cores\openvpn" | Out-Null
-            Copy-Item (Join-Path $exe.DirectoryName "*") "$Cores\openvpn\" -Recurse -Force
-        }
+        if ($exe) { Copy-Item (Join-Path $exe.DirectoryName "*") "$Cores\openvpn\" -Recurse -Force }
     } else {
-        Write-Warning "OpenVPN core not found (.cores\openvpn\openvpn.exe). Set OPENVPN_ZIP or add it manually; skipping."
+        $OvpnMsiUrl = if ($env:OPENVPN_MSI) { $env:OPENVPN_MSI } `
+                      else { "https://build.openvpn.net/downloads/releases/latest/openvpn-latest-stable-amd64.msi" }
+        $msi = (Join-Path (Resolve-Path $Cores).Path "openvpn.msi")
+        Write-Host "    downloading $OvpnMsiUrl"
+        Invoke-WebRequest -Uri $OvpnMsiUrl -OutFile $msi
+        $extract = (New-Item -ItemType Directory -Force -Path "$Cores\openvpn-msi").FullName
+        # /a = administrative install: unpack files only, no system install / elevation.
+        $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/a `"$msi`" /qn TARGETDIR=`"$extract`""
+        if ($p.ExitCode -ne 0) { Write-Warning "msiexec extract failed ($($p.ExitCode))" }
+        $exe = Get-ChildItem -Recurse $extract -Filter openvpn.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($exe) {
+            Copy-Item (Join-Path $exe.DirectoryName "*") "$Cores\openvpn\" -Recurse -Force
+            # Stage license / copyright files (GPLv2 compliance) into a separate licenses dir.
+            New-Item -ItemType Directory -Force -Path "$Cores\_licenses" | Out-Null
+            Get-ChildItem -Recurse $extract -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '(?i)(licen|copying|gpl|notice)' } |
+                ForEach-Object { Copy-Item $_.FullName (Join-Path "$Cores\_licenses" ("openvpn-" + $_.Name)) -Force -ErrorAction SilentlyContinue }
+        } else {
+            Write-Warning "openvpn.exe not found in the MSI — OpenVPN tunnels will be unavailable (WireGuard/AmneziaWG still work)."
+        }
     }
 }
 
@@ -80,6 +99,20 @@ if (Test-Path "$Cores\openvpn\openvpn.exe") {
     Copy-Item "$Cores\openvpn\*" "$Dist\" -Force
     Write-Host "    bundled OpenVPN core"
 }
+
+Write-Host "==> Bundling third-party license texts"
+$Lic = "$Dist\licenses"
+New-Item -ItemType Directory -Force -Path $Lic | Out-Null
+# Core repos are cloned under .cores\ — copy their LICENSE text verbatim (MIT requires the notice).
+if (Test-Path "$Cores\wireguard-go\LICENSE") { Copy-Item "$Cores\wireguard-go\LICENSE" "$Lic\wireguard-go-LICENSE.txt" -Force }
+Get-ChildItem "$Cores\amneziawg-go" -Filter "LICENSE*" -File -ErrorAction SilentlyContinue |
+    Select-Object -First 1 | ForEach-Object { Copy-Item $_.FullName "$Lic\amneziawg-go-LICENSE.txt" -Force }
+Get-ChildItem "$Cores\wintun" -Recurse -Filter "*LICENSE*" -File -ErrorAction SilentlyContinue |
+    Select-Object -First 1 | ForEach-Object { Copy-Item $_.FullName "$Lic\wintun-LICENSE.txt" -Force }
+if (Test-Path "$Cores\_licenses") { Copy-Item "$Cores\_licenses\*" "$Lic\" -Force }
+if (Test-Path "..\LICENSE") { Copy-Item "..\LICENSE" "$Lic\TunHub-LICENSE.txt" -Force }
+if (Test-Path "..\THIRD-PARTY-NOTICES.md") { Copy-Item "..\THIRD-PARTY-NOTICES.md" "$Lic\" -Force }
+Write-Host "    licenses → $Lic"
 
 if (-not $env:SKIP_MSI) {
     Write-Host "==> Building MSI installer (WiX)"
