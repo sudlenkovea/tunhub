@@ -193,13 +193,13 @@ final class WindowManager: NSObject, NSWindowDelegate {
 
     private func makeWindow(title: String, size: NSSize, content: some View) -> NSWindow {
         let w = NSWindow(contentRect: NSRect(origin: .zero, size: size),
-                         styleMask: [.titled, .closable, .miniaturizable, .resizable, .unifiedTitleAndToolbar],
+                         styleMask: [.titled, .closable, .miniaturizable, .resizable],
                          backing: .buffered, defer: false)
         w.title = title
-        // Modern macOS chrome: the SwiftUI `.toolbar` bridges to an NSToolbar; making it unified
-        // merges it with the titlebar (the current-macOS look) instead of the old separate strip.
+        // Unified toolbar style merges the SwiftUI `.toolbar` with the titlebar. We deliberately
+        // avoid the legacy `.unifiedTitleAndToolbar` style mask and opaque-titlebar tweaks — on
+        // macOS 26 (Liquid Glass) those opt the window out of the system's glass chrome.
         w.toolbarStyle = .unified
-        w.titlebarAppearsTransparent = false
         w.isReleasedWhenClosed = false      // keep it so we can re-show on next click
         w.center()
         w.contentViewController = NSHostingController(rootView: content)
