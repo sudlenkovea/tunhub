@@ -111,7 +111,6 @@ public static class Loc
             ["Options"] = "Опции",
             ["Kill switch (block traffic outside the tunnel)"] = "Kill switch (блокировать трафик мимо туннеля)",
             ["Connect on app launch"] = "Подключать при запуске приложения",
-            ["Cancel"] = "Отмена",
             ["OpenVPN profile"] = "Профиль OpenVPN",
             ["Credentials"] = "Учётные данные",
             ["OTP is asked at connect"] = "OTP спрашивается при подключении",
@@ -121,10 +120,19 @@ public static class Loc
             ["{0} routes"] = "{0} маршрутов",
             ["split tunnel — not routed"] = "split-туннель — не маршрутизируется",
             ["check failed (blocked or no route)"] = "проверка не удалась (заблокировано / нет маршрута)",
-            ["checking…"] = "проверяю…",
             ["Installing… (confirm the Windows prompt)"] = "Устанавливаю… (подтвердите системный запрос)",
             ["Installation was cancelled or failed."] = "Установка отменена или не удалась.",
-            ["The component was installed but isn't responding yet. Check the TunHubHelper service, or try again."] = "Компонент установлен, но пока не отвечает. Проверьте службу TunHubHelper или повторите."
+            ["The component was installed but isn't responding yet. Check the TunHubHelper service, or try again."] = "Компонент установлен, но пока не отвечает. Проверьте службу TunHubHelper или повторите.",
+            ["Helper: outdated"] = "Хелпер: устарел",
+            ["System component update required"] = "Требуется обновление системного компонента",
+            ["Installed {0}, this app expects {1}."] = "Установлено {0}, приложение ожидает {1}.",
+            ["Update"] = "Обновить",
+            ["Install"] = "Установить",
+            ["Reinstall"] = "Переустановить",
+            ["System component stopped"] = "Системный компонент остановлен",
+            ["The TunHubHelper service is installed but not running."] = "Служба TunHubHelper установлена, но не запущена.",
+            ["System component not responding"] = "Системный компонент не отвечает",
+            ["The service is running but not answering — reinstall it."] = "Служба запущена, но не отвечает — переустановите её."
         }
     };
 }

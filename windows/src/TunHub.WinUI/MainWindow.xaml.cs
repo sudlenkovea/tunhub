@@ -27,6 +27,9 @@ public sealed partial class MainWindow : Window
     private Guid _editorForId;               // the tunnel the Editor tab is currently built for
     private bool _helperReachable;
     private readonly Dictionary<Guid, string> _externalIp = new();   // per-tunnel checked-at-start IP
+    private readonly Dictionary<Guid, string> _startErrors = new();  // sticky start-time errors
+    private (bool Exists, bool Running) _svc;
+    private DateTimeOffset _svcQueriedAt = DateTimeOffset.MinValue;
 
     /// <summary>Raised when the user closes the window — the app hides it to the tray.</summary>
     public event Action? HideToTrayRequested;
@@ -144,9 +147,13 @@ public sealed partial class MainWindow : Window
         }
         else { OvExternalIp.Text = "—"; _externalIp.Remove(cfg.Id); }
 
-        // Failure banner + retry (mirrors macOS connectionFailure alert).
-        if (phase == TunnelPhase.Failed && s?.ErrorMessage is { Length: > 0 } err)
+        // Failure banner + retry (mirrors macOS connectionFailure alert). Shows either the
+        // helper-reported failure (e.g. OpenVPN "authentication failed") or a sticky start error.
+        string? err = (phase == TunnelPhase.Failed ? s?.ErrorMessage : null)
+                      ?? (_startErrors.TryGetValue(cfg.Id, out var se) ? se : null);
+        if (err is { Length: > 0 })
         {
+            FailureBar.Title = Loc.T("Connection failed");
             FailureBar.Message = err;
             var isAuth = err.Contains("auth", StringComparison.OrdinalIgnoreCase);
             RetryBtn.Content = Loc.T(isAuth ? "Re-enter credentials" : "Retry");
@@ -440,11 +447,7 @@ public sealed partial class MainWindow : Window
 
     private async Task PollAsync()
     {
-        var reachable = await _daemon.PingAsync();
-        _helperReachable = reachable;
-        HelperStatus.Text = reachable ? Loc.T("Helper: connected") : Loc.T("Helper: not reachable");
-        HelperDot.Fill = new SolidColorBrush(reachable ? Colors.MediumSeaGreen : Colors.Gray);
-        HelperBar.IsOpen = !reachable;   // offer to install/start the system component
+        await UpdateHelperStatusAsync();
 
         var states = await _daemon.RuntimeStatesAsync();
         _runtime = states.GroupBy(s => s.Id).ToDictionary(g => g.Key, g => g.First());
@@ -453,6 +456,9 @@ public sealed partial class MainWindow : Window
             var phase = _runtime.TryGetValue(item.Config.Id, out var s) ? s.Phase : TunnelPhase.Stopped;
             item.SetPhase(phase);
         }
+        // Hide "Stop all" unless something is actually running (macOS parity).
+        var anyRunning = _runtime.Values.Any(s => s.Phase is TunnelPhase.Up or TunnelPhase.Degraded or TunnelPhase.Starting);
+        StopAllBtn.Visibility = anyRunning ? Visibility.Visible : Visibility.Collapsed;
         // Share phases with the tray menu and refresh it when they change.
         App.States = _items.ToDictionary(i => i.Config.Id,
             i => _runtime.TryGetValue(i.Config.Id, out var st) ? st.Phase : TunnelPhase.Stopped);
@@ -507,9 +513,14 @@ public sealed partial class MainWindow : Window
             }
 
             _reportedFailures.Remove(cfg.Id);
+            _startErrors.Remove(cfg.Id);
             await _daemon.StartTunnelAsync(spec);
         }
-        catch (Exception ex) { DetailStatus.Text = ex.Message; }
+        catch (Exception ex)
+        {
+            App.Log("start", ex);
+            _startErrors[cfg.Id] = ex.Message;   // sticky until the next start/stop
+        }
         await PollAsync();
     }
 
@@ -543,6 +554,7 @@ public sealed partial class MainWindow : Window
     private async Task StopSelectedAsync()
     {
         if (Selected is null) return;
+        _startErrors.Remove(Selected.Config.Id);
         await SafeAsync(() => _daemon.StopTunnelAsync(Selected.Config.Id));
         await PollAsync();
     }
@@ -708,6 +720,84 @@ public sealed partial class MainWindow : Window
         _ => Colors.SteelBlue
     });
 
+    // Helper status like the macOS daemon-version check: not installed / stopped / outdated /
+    // not responding / connected — with the installed vs expected version and the right button.
+    private async Task UpdateHelperStatusAsync()
+    {
+        _helperReachable = await _daemon.PingAsync();
+
+        if (_helperReachable)
+        {
+            var version = await _daemon.VersionAsync();
+            var expected = $"{TunHubInfo.ProtocolVersion}+{TunHub.Engine.BuildStamp.Value}";
+            if (version == expected)
+            {
+                HelperStatus.Text = Loc.T("Helper: connected");
+                HelperDot.Fill = new SolidColorBrush(Colors.MediumSeaGreen);
+                HelperBar.IsOpen = false;
+            }
+            else
+            {
+                HelperStatus.Text = Loc.T("Helper: outdated");
+                HelperDot.Fill = new SolidColorBrush(Colors.Orange);
+                HelperBar.Severity = InfoBarSeverity.Warning;
+                HelperBar.Title = Loc.T("System component update required");
+                HelperBar.Message = string.Format(Loc.T("Installed {0}, this app expects {1}."), version ?? "?", expected);
+                InstallHelperBtn.Content = Loc.T("Update");
+                HelperBar.IsOpen = true;
+            }
+            return;
+        }
+
+        HelperStatus.Text = Loc.T("Helper: not reachable");
+        HelperDot.Fill = new SolidColorBrush(Colors.Gray);
+
+        if ((DateTimeOffset.Now - _svcQueriedAt).TotalSeconds > 3)   // sc.exe spawn — throttle
+        {
+            _svc = await Task.Run(QueryHelperService);
+            _svcQueriedAt = DateTimeOffset.Now;
+        }
+        HelperBar.Severity = InfoBarSeverity.Warning;
+        if (!_svc.Exists)
+        {
+            HelperBar.Title = Loc.T("System component not installed");
+            HelperBar.Message = Loc.T("TunHub needs a background service to manage tunnels.");
+            InstallHelperBtn.Content = Loc.T("Install");
+        }
+        else if (!_svc.Running)
+        {
+            HelperBar.Title = Loc.T("System component stopped");
+            HelperBar.Message = Loc.T("The TunHubHelper service is installed but not running.");
+            InstallHelperBtn.Content = Loc.T("Start");
+        }
+        else
+        {
+            HelperBar.Title = Loc.T("System component not responding");
+            HelperBar.Message = Loc.T("The service is running but not answering — reinstall it.");
+            InstallHelperBtn.Content = Loc.T("Reinstall");
+        }
+        HelperBar.IsOpen = true;
+    }
+
+    private static (bool Exists, bool Running) QueryHelperService()
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "sc.exe", Arguments = "query TunHubHelper",
+                RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true
+            };
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p is null) return (false, false);
+            var outp = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(3000);
+            if (p.ExitCode != 0) return (false, false);   // 1060 = service does not exist
+            return (true, outp.Contains("RUNNING"));
+        }
+        catch { return (false, false); }
+    }
+
     private async Task InstallHelperAsync()
     {
         var exe = Path.Combine(AppContext.BaseDirectory, "tunhub-helper.exe");
@@ -717,11 +807,15 @@ public sealed partial class MainWindow : Window
         // Elevated + windowless: create the data dir, grant BUILTIN\Users access (so the app can
         // reach the SYSTEM service's local socket), then register + start the service. One native
         // UAC prompt, no cmd window (PowerShell runs hidden). SID S-1-5-32-545 = Users.
+        // One idempotent action for install / start / update: ensure data dir + ACL, create the
+        // service if missing (or repoint its binary), then restart it to pick up the latest exe.
         var ps =
             $"New-Item -ItemType Directory -Force -Path '{data}' | Out-Null; " +
             $"icacls '{data}' /grant '*S-1-5-32-545:(OI)(CI)M' /T | Out-Null; " +
             "$s = Get-Service TunHubHelper -ErrorAction SilentlyContinue; " +
-            $"if (-not $s) {{ New-Service -Name TunHubHelper -BinaryPathName '\"{exe}\"' -StartupType Automatic -DisplayName 'TunHub Helper' | Out-Null }}; " +
+            $"if (-not $s) {{ New-Service -Name TunHubHelper -BinaryPathName '\"{exe}\"' -StartupType Automatic -DisplayName 'TunHub Helper' | Out-Null }} " +
+            $"else {{ sc.exe config TunHubHelper binPath= '\"{exe}\"' | Out-Null }}; " +
+            "Stop-Service TunHubHelper -ErrorAction SilentlyContinue; " +
             "Start-Service TunHubHelper";
         var b64 = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(ps));
 
@@ -755,6 +849,7 @@ public sealed partial class MainWindow : Window
         // Wait for the service to come up and answer, up to ~20s.
         for (int i = 0; i < 40 && !await _daemon.PingAsync(); i++) await Task.Delay(500);
         dialog.Hide();
+        _svcQueriedAt = DateTimeOffset.MinValue;   // force a fresh service query
         await PollAsync();
         if (!_helperReachable)
             await MessageAsync(Loc.T("Install system component"),
