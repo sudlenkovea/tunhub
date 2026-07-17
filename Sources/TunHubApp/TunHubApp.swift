@@ -93,32 +93,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.persistOnQuit()
             return .terminateNow
         }
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Disconnect all tunnels before quitting?",
-                                              comment: "quit prompt title")
-        alert.informativeText = NSLocalizedString(
-            "Some tunnels are still connected. You can disconnect them now or leave them running.",
-            comment: "quit prompt body")
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("Disconnect and quit", comment: ""))     // 1000
-        alert.addButton(withTitle: NSLocalizedString("Quit, keep running", comment: ""))       // 1001
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: ""))                   // 1002
+        // Present the prompt on the NEXT runloop tick. terminate() is often triggered from
+        // inside menu/popover tracking (the tray "Quit" item); running an NSAlert modal in that
+        // context silently fails to show and the quit appears to do nothing. Deferring lets the
+        // menu tracking end first, so the alert reliably appears. We hold termination with
+        // .terminateLater and reply once the user chooses.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { NSApp.reply(toApplicationShouldTerminate: true); return }
+            self.closePopover()
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
 
-        NSApp.activate(ignoringOtherApps: true)
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:                 // Disconnect and quit
-            Task { @MainActor in
-                await state.stopAll()
-                state.persistOnQuit()
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString("Disconnect all tunnels before quitting?",
+                                                  comment: "quit prompt title")
+            alert.informativeText = NSLocalizedString(
+                "Some tunnels are still connected. You can disconnect them now or leave them running.",
+                comment: "quit prompt body")
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: NSLocalizedString("Disconnect and quit", comment: ""))
+            alert.addButton(withTitle: NSLocalizedString("Quit, keep running", comment: ""))
+            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: ""))
+
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:             // Disconnect and quit
+                Task { @MainActor in
+                    await self.state.stopAll()
+                    self.state.persistOnQuit()
+                    NSApp.reply(toApplicationShouldTerminate: true)
+                }
+            case .alertSecondButtonReturn:            // Quit, keep tunnels running
+                self.state.persistOnQuit()
                 NSApp.reply(toApplicationShouldTerminate: true)
+            default:                                  // Cancel
+                NSApp.reply(toApplicationShouldTerminate: false)
             }
-            return .terminateLater
-        case .alertSecondButtonReturn:                // Quit, keep tunnels running
-            state.persistOnQuit()
-            return .terminateNow
-        default:                                      // Cancel
-            return .terminateCancel
         }
+        return .terminateLater
     }
 }
 
