@@ -21,6 +21,19 @@ public partial class App : Application
     internal static Dictionary<Guid, TunnelPhase> States = new();
 
     private MenuFlyout? _trayMenu;
+    private string _traySig = "";
+
+    /// <summary>Rebuild the tray menu when the tunnel set/statuses change (called from the poll).
+    /// Doing it proactively — not on the flyout's Opening event — avoids an empty menu.</summary>
+    public void RefreshTray()
+    {
+        if (_trayMenu is null) return;
+        var sig = string.Join(",", SafeTunnels().Select(t =>
+            $"{t.Id}:{(States.TryGetValue(t.Id, out var p) ? p : TunnelPhase.Stopped)}"));
+        if (sig == _traySig) return;
+        _traySig = sig;
+        try { RebuildTrayMenu(); } catch (Exception ex) { Log("tray-refresh", ex); }
+    }
 
     public App()
     {
@@ -81,9 +94,6 @@ public partial class App : Application
     private void InitTray()
     {
         _trayMenu = new MenuFlyout();
-        // Rebuild the menu each time it opens so the tunnel list + statuses are current.
-        _trayMenu.Opening += (_, _) => RebuildTrayMenu();
-
         _tray = new TaskbarIcon
         {
             ToolTipText = "TunHub",

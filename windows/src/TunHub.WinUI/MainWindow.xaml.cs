@@ -453,9 +453,10 @@ public sealed partial class MainWindow : Window
             var phase = _runtime.TryGetValue(item.Config.Id, out var s) ? s.Phase : TunnelPhase.Stopped;
             item.SetPhase(phase);
         }
-        // Share phases with the tray menu.
+        // Share phases with the tray menu and refresh it when they change.
         App.States = _items.ToDictionary(i => i.Config.Id,
             i => _runtime.TryGetValue(i.Config.Id, out var st) ? st.Phase : TunnelPhase.Stopped);
+        (Application.Current as App)?.RefreshTray();
         UpdateDetail();
     }
 
