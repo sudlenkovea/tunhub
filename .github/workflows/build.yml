@@ -11,14 +11,14 @@ on:
 jobs:
   # ── macOS: native Swift app → .dmg ────────────────────────────────────────
   macos:
-    runs-on: macos-14
+    runs-on: macos-latest          # newest image → newest macOS SDK (Liquid Glass on macOS 26)
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select latest stable Xcode (Swift 6 toolchain)
+      - name: Select latest Xcode (newest SDK)
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: latest
 
       - name: Set up Go
         uses: actions/setup-go@v5
