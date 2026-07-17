@@ -8,7 +8,9 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using TunHub.App.Services;
 using TunHub.Core;
+using TunHub.Engine.Platform;
 using Windows.Storage.Pickers;
+using Windows.UI;
 
 namespace TunHub.WinUI;
 

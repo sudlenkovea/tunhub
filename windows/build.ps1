@@ -86,7 +86,9 @@ if (-not $env:SKIP_MSI) {
         $env:Path += ";$env:USERPROFILE\.dotnet\tools"
     }
     $Msi = "dist\TunHub-0.8.1-$Rid.msi"
-    wix build installer\TunHub.wxs -d DistDir=$Dist -arch ($Rid -replace 'win-','') -o $Msi
+    # Absolute DistDir: WiX resolves -d paths relative to the .wxs file (installer\), not the cwd.
+    $DistAbs = (Resolve-Path $Dist).Path
+    wix build installer\TunHub.wxs -d DistDir="$DistAbs" -arch ($Rid -replace 'win-','') -o $Msi
     if (Test-Path $Msi) { Write-Host "    MSI: $Msi" }
 }
 
