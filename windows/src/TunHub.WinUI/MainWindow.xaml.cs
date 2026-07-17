@@ -24,6 +24,8 @@ public sealed partial class MainWindow : Window
     private Dictionary<Guid, TunnelRuntimeState> _runtime = new();
     private readonly HashSet<Guid> _reportedFailures = new();
     private readonly AppWindow _appWindow;
+    private Guid _editorForId;               // the tunnel the Editor tab is currently built for
+    private bool _helperReachable;
 
     /// <summary>Raised when the user closes the window — the app hides it to the tray.</summary>
     public event Action? HideToTrayRequested;
@@ -53,6 +55,8 @@ public sealed partial class MainWindow : Window
         DeleteBtn.Click += (_, _) => DeleteSelected();
         CheckIpBtn.Click += async (_, _) => await CheckExternalIpAsync();
         RetryBtn.Click += async (_, _) => await StartSelectedAsync();
+        InstallHelperBtn.Click += async (_, _) => await InstallHelperAsync();
+        DetailTabs.SelectionChanged += (_, _) => UpdateTabVisibility();
         TunnelList.SelectionChanged += (_, _) => UpdateDetail();
 
         LoadTunnels();
@@ -90,6 +94,12 @@ public sealed partial class MainWindow : Window
         DeleteBtn.Content = Loc.T("Delete");
         CheckIpBtn.Content = Loc.T("Check");
         EmptyHint.Text = Loc.T("Select a tunnel or import configs");
+        TabOverview.Text = Loc.T("Overview");
+        TabEditor.Text = Loc.T("Editor");
+        TabStatus.Text = Loc.T("Status");
+        HelperBar.Title = Loc.T("System component not running");
+        HelperBar.Message = Loc.T("TunHub needs a background service to manage tunnels.");
+        InstallHelperBtn.Content = Loc.T("Install system component");
     }
 
     private void LoadTunnels()
@@ -140,53 +150,220 @@ public sealed partial class MainWindow : Window
         }
         else FailureBar.IsOpen = false;
 
-        BuildEditor(cfg);
+        // Rebuild the editor form only when the selected tunnel changes — otherwise the 1 Hz
+        // poll would wipe whatever the user is typing.
+        if (_editorForId != cfg.Id)
+        {
+            _editorForId = cfg.Id;
+            BuildEditor(cfg);
+            SelectTab(TabOverview);
+        }
         BuildStatus(cfg, s);
+    }
+
+    private void SelectTab(SelectorBarItem item)
+    {
+        if (DetailTabs.SelectedItem != item) DetailTabs.SelectedItem = item;
+        UpdateTabVisibility();
+    }
+
+    private void UpdateTabVisibility()
+    {
+        OverviewPane.Visibility = DetailTabs.SelectedItem == TabOverview ? Visibility.Visible : Visibility.Collapsed;
+        EditorPane.Visibility   = DetailTabs.SelectedItem == TabEditor   ? Visibility.Visible : Visibility.Collapsed;
+        StatusPane.Visibility   = DetailTabs.SelectedItem == TabStatus   ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // MARK: - Editor / Status hosts
 
+    private static TextBlock SectionHeader(string text) => new()
+    {
+        Text = text, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(0, 6, 0, 0)
+    };
+
+    private static Brush Secondary => (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+
     private void BuildEditor(TunnelConfig cfg)
     {
         EditorHost.Children.Clear();
+
+        if (cfg.Kind == TunnelKind.OpenVpn) { BuildOpenVpnEditor(cfg); return; }
+
         var name = new TextBox { Header = Loc.T("Name"), Text = cfg.Name };
+        var priv = new TextBox { Header = Loc.T("Private key"), Text = _store.LoadSecrets(cfg.Id)?.PrivateKey ?? "" };
+        var pub = new TextBox { Header = Loc.T("Public key"), Text = cfg.Interface.PublicKey, IsReadOnly = true };
+        var gen = new Button { Content = Loc.T("Generate") };
+        gen.Click += (_, _) => { var k = WgKey.GeneratePrivateKey(); priv.Text = k; pub.Text = WgKey.PublicKey(k) ?? ""; };
+        priv.TextChanged += (_, _) => pub.Text = WgKey.PublicKey(priv.Text.Trim()) ?? "";
+
+        var addresses = new TextBox { Header = Loc.T("Address"), Text = string.Join(", ", cfg.Interface.Addresses.Select(Fmt)) };
+        var dns = new TextBox { Header = "DNS", Text = string.Join(", ", cfg.Interface.Dns) };
+        var mtu = new TextBox { Header = "MTU", Text = cfg.Interface.Mtu?.ToString() ?? "" };
+        var listen = new TextBox { Header = "ListenPort", Text = cfg.Interface.ListenPort?.ToString() ?? "" };
+
         EditorHost.Children.Add(name);
+        EditorHost.Children.Add(SectionHeader(Loc.T("Interface")));
+        EditorHost.Children.Add(priv);
+        EditorHost.Children.Add(gen);
+        EditorHost.Children.Add(pub);
+        EditorHost.Children.Add(addresses);
+        EditorHost.Children.Add(dns);
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        row.Children.Add(mtu); row.Children.Add(listen);
+        EditorHost.Children.Add(row);
 
-        var summary = new TextBlock
+        // Peers.
+        EditorHost.Children.Add(SectionHeader(Loc.T("Peers")));
+        var peerBoxes = new List<(TextBox Pub, TextBox End, TextBox Allowed, TextBox Keep)>();
+        var peersHost = new StackPanel { Spacing = 8 };
+        EditorHost.Children.Add(peersHost);
+        void AddPeerCard(PeerConfig? p)
         {
-            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            TextWrapping = TextWrapping.Wrap
-        };
-        if (cfg.Kind == TunnelKind.OpenVpn && cfg.OpenVpn is { } ov)
-        {
-            summary.Text =
-                $"{Loc.T("Remotes")}: {string.Join(", ", ov.Remotes.Select(r => $"{r.Host}:{r.Port}/{r.Proto}"))}\n" +
-                $"{Loc.T("Auth")}: {ov.AuthMode}\n" +
-                (ov.Cipher is { } c ? $"{Loc.T("Cipher")}: {c}\n" : "") +
-                (ov.RedirectGateway ? Loc.T("Redirect gateway") + "\n" : "") +
-                Loc.T("The .ovpn profile is read-only — re-import the file to change it.");
+            var pk = new TextBox { Header = Loc.T("Public key"), Text = p?.PublicKey ?? "" };
+            var ep = new TextBox { Header = Loc.T("Endpoint"), Text = p?.Endpoint ?? "" };
+            var al = new TextBox { Header = "AllowedIPs", Text = p is null ? "0.0.0.0/0, ::/0" : string.Join(", ", p.AllowedIPs.Select(Fmt)) };
+            var ka = new TextBox { Header = "Keepalive", Text = p?.PersistentKeepalive?.ToString() ?? "" };
+            var box = (pk, ep, al, ka);
+            peerBoxes.Add(box);
+            var card = new StackPanel { Spacing = 6, Padding = new Thickness(10),
+                BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
+                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8) };
+            card.Children.Add(pk); card.Children.Add(ep); card.Children.Add(al); card.Children.Add(ka);
+            var rm = new Button { Content = Loc.T("Remove peer") };
+            rm.Click += (_, _) => { peersHost.Children.Remove(card); peerBoxes.Remove(box); };
+            card.Children.Add(rm);
+            peersHost.Children.Add(card);
         }
-        else
-        {
-            summary.Text =
-                $"{Loc.T("Address")}: {string.Join(", ", cfg.Interface.Addresses.Select(a => a.ToString()))}\n" +
-                $"{Loc.T("Peers")}: {cfg.Peers.Count}\n" +
-                (cfg.Interface.Dns.Count > 0 ? $"DNS: {string.Join(", ", cfg.Interface.Dns)}\n" : "") +
-                (cfg.Awg is { IsEmpty: false } ? Loc.T("AmneziaWG obfuscation") : "");
-        }
-        EditorHost.Children.Add(summary);
+        foreach (var p in cfg.Peers) AddPeerCard(p);
+        var addPeer = new Button { Content = Loc.T("Add peer") };
+        addPeer.Click += (_, _) => AddPeerCard(null);
+        EditorHost.Children.Add(addPeer);
 
+        // AmneziaWG obfuscation (compact grid of the common knobs).
+        TextBox? jc = null, jmin = null, jmax = null, s1 = null, s2 = null, s3 = null, s4 = null;
+        if (cfg.Kind == TunnelKind.AmneziaWg)
+        {
+            EditorHost.Children.Add(SectionHeader(Loc.T("AmneziaWG obfuscation")));
+            var a = cfg.Awg ?? new AwgParams();
+            jc = new TextBox { Header = "Jc", Text = a.Jc?.ToString() ?? "" };
+            jmin = new TextBox { Header = "Jmin", Text = a.Jmin?.ToString() ?? "" };
+            jmax = new TextBox { Header = "Jmax", Text = a.Jmax?.ToString() ?? "" };
+            s1 = new TextBox { Header = "S1", Text = a.S1?.ToString() ?? "" };
+            s2 = new TextBox { Header = "S2", Text = a.S2?.ToString() ?? "" };
+            s3 = new TextBox { Header = "S3", Text = a.S3?.ToString() ?? "" };
+            s4 = new TextBox { Header = "S4", Text = a.S4?.ToString() ?? "" };
+            var g = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
+            for (int i = 0; i < 4; i++) g.ColumnDefinitions.Add(new ColumnDefinition());
+            g.RowDefinitions.Add(new RowDefinition()); g.RowDefinitions.Add(new RowDefinition());
+            void place(TextBox t, int c, int r) { Grid.SetColumn(t, c); Grid.SetRow(t, r); g.Children.Add(t); }
+            place(jc!, 0, 0); place(jmin!, 1, 0); place(jmax!, 2, 0); place(s1!, 3, 0);
+            place(s2!, 0, 1); place(s3!, 1, 1); place(s4!, 2, 1);
+            EditorHost.Children.Add(g);
+        }
+
+        // Options.
+        EditorHost.Children.Add(SectionHeader(Loc.T("Options")));
+        var kill = new ToggleSwitch { Header = Loc.T("Kill switch (block traffic outside the tunnel)"), IsOn = cfg.Options.KillSwitch };
+        var autoc = new ToggleSwitch { Header = Loc.T("Connect on app launch"), IsOn = cfg.Options.AutoConnectOnLaunch };
+        EditorHost.Children.Add(kill);
+        EditorHost.Children.Add(autoc);
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
+        var cancel = new Button { Content = Loc.T("Cancel") };
+        cancel.Click += (_, _) => { _editorForId = Guid.Empty; UpdateDetail(); SelectTab(TabOverview); };
         var save = new Button { Content = Loc.T("Save"), Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
         save.Click += (_, _) =>
         {
-            var c = cfg;
-            c.Name = name.Text.Trim();
-            _store.Save(c);
+            cfg.Name = name.Text.Trim();
+            cfg.Interface.PublicKey = pub.Text.Trim();
+            cfg.Interface.Addresses = ParseRanges(addresses.Text);
+            cfg.Interface.Dns = SplitList(dns.Text);
+            cfg.Interface.Mtu = int.TryParse(mtu.Text.Trim(), out var m) ? m : null;
+            cfg.Interface.ListenPort = ushort.TryParse(listen.Text.Trim(), out var lp) ? lp : null;
+            cfg.Peers = peerBoxes.Select(b => new PeerConfig
+            {
+                PublicKey = b.Pub.Text.Trim(),
+                Endpoint = string.IsNullOrWhiteSpace(b.End.Text) ? null : b.End.Text.Trim(),
+                AllowedIPs = ParseRanges(b.Allowed.Text),
+                PersistentKeepalive = ushort.TryParse(b.Keep.Text.Trim(), out var k) ? k : null
+            }).ToList();
+            if (cfg.Kind == TunnelKind.AmneziaWg)
+            {
+                cfg.Awg = new AwgParams
+                {
+                    Jc = ParseInt(jc), Jmin = ParseInt(jmin), Jmax = ParseInt(jmax),
+                    S1 = ParseInt(s1), S2 = ParseInt(s2), S3 = ParseInt(s3), S4 = ParseInt(s4)
+                };
+            }
+            cfg.Options.KillSwitch = kill.IsOn;
+            cfg.Options.AutoConnectOnLaunch = autoc.IsOn;
+
+            var secrets = _store.LoadSecrets(cfg.Id) ?? new TunnelSecrets();
+            secrets.PrivateKey = priv.Text.Trim();
+            _store.SaveSecrets(cfg.Id, secrets);
+            _store.Save(cfg);
+            _editorForId = Guid.Empty;
             LoadTunnels();
-            DetailPivot.SelectedIndex = 0; // jump back to Overview (matches macOS "Cancel/Save → status")
+            SelectTab(TabOverview);
+        };
+        buttons.Children.Add(save);
+        buttons.Children.Add(cancel);
+        EditorHost.Children.Add(buttons);
+    }
+
+    private void BuildOpenVpnEditor(TunnelConfig cfg)
+    {
+        var ov = cfg.OpenVpn!;
+        var name = new TextBox { Header = Loc.T("Name"), Text = cfg.Name };
+        EditorHost.Children.Add(name);
+
+        EditorHost.Children.Add(SectionHeader(Loc.T("OpenVPN profile")));
+        var summary = new TextBlock { Foreground = Secondary, TextWrapping = TextWrapping.Wrap, Text =
+            $"{Loc.T("Remotes")}: {string.Join(", ", ov.Remotes.Select(r => $"{r.Host}:{r.Port}/{r.Proto}"))}\n" +
+            $"{Loc.T("Auth")}: {ov.AuthMode}\n" +
+            (ov.Cipher is { } c ? $"{Loc.T("Cipher")}: {c}\n" : "") +
+            (ov.RedirectGateway ? Loc.T("Redirect gateway") + "\n" : "") +
+            Loc.T("The .ovpn profile is read-only — re-import the file to change it.") };
+        EditorHost.Children.Add(summary);
+
+        EditorHost.Children.Add(SectionHeader(Loc.T("Credentials")));
+        var stored = _store.LoadSecrets(cfg.Id);
+        var user = new TextBox { Header = Loc.T("Username"), Text = stored?.OpenVpn.GetValueOrDefault("username") ?? "" };
+        var pass = new PasswordBox { Header = Loc.T("Password") };
+        EditorHost.Children.Add(user);
+        EditorHost.Children.Add(pass);
+        EditorHost.Children.Add(new TextBlock { Text = Loc.T("OTP is asked at connect"), FontSize = 12, Foreground = Secondary });
+
+        EditorHost.Children.Add(SectionHeader(Loc.T("Options")));
+        var kill = new ToggleSwitch { Header = Loc.T("Kill switch (block traffic outside the tunnel)"), IsOn = cfg.Options.KillSwitch };
+        var autoc = new ToggleSwitch { Header = Loc.T("Connect on app launch"), IsOn = cfg.Options.AutoConnectOnLaunch };
+        EditorHost.Children.Add(kill);
+        EditorHost.Children.Add(autoc);
+
+        var save = new Button { Content = Loc.T("Save"), Style = (Style)Application.Current.Resources["AccentButtonStyle"], Margin = new Thickness(0, 6, 0, 0) };
+        save.Click += (_, _) =>
+        {
+            cfg.Name = name.Text.Trim();
+            cfg.Options.KillSwitch = kill.IsOn;
+            cfg.Options.AutoConnectOnLaunch = autoc.IsOn;
+            var secrets = _store.LoadSecrets(cfg.Id) ?? new TunnelSecrets();
+            if (!string.IsNullOrWhiteSpace(user.Text)) secrets.OpenVpn["username"] = user.Text.Trim();
+            if (!string.IsNullOrEmpty(pass.Password)) secrets.OpenVpn["password"] = pass.Password;
+            _store.SaveSecrets(cfg.Id, secrets);
+            _store.Save(cfg);
+            _editorForId = Guid.Empty;
+            LoadTunnels();
+            SelectTab(TabOverview);
         };
         EditorHost.Children.Add(save);
     }
+
+    private static int? ParseInt(TextBox? t) => t is not null && int.TryParse(t.Text.Trim(), out var v) ? v : null;
+    private static List<string> SplitList(string s) =>
+        s.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    private static List<IpAddressRange> ParseRanges(string s) =>
+        SplitList(s).Select(IpAddressRange.Parse).Where(r => r is not null).Select(r => r!.Value).ToList();
+    private static string Fmt(IpAddressRange a) => $"{a.AddressString}/{a.Prefix}";
 
     private void BuildStatus(TunnelConfig cfg, TunnelRuntimeState? s)
     {
@@ -225,8 +402,10 @@ public sealed partial class MainWindow : Window
     private async Task PollAsync()
     {
         var reachable = await _daemon.PingAsync();
+        _helperReachable = reachable;
         HelperStatus.Text = reachable ? Loc.T("Helper: connected") : Loc.T("Helper: not reachable");
         HelperDot.Fill = new SolidColorBrush(reachable ? Colors.MediumSeaGreen : Colors.Gray);
+        HelperBar.IsOpen = !reachable;   // offer to install/start the system component
 
         var states = await _daemon.RuntimeStatesAsync();
         _runtime = states.GroupBy(s => s.Id).ToDictionary(g => g.Key, g => g.First());
@@ -250,7 +429,7 @@ public sealed partial class MainWindow : Window
         _store.Save(cfg);
         LoadTunnels();
         TunnelList.SelectedItem = _items.FirstOrDefault(i => i.Config.Id == cfg.Id);
-        DetailPivot.SelectedIndex = 1; // open the editor
+        SelectTab(TabEditor); // open the editor for the new tunnel
     }
 
     private async Task StartSelectedAsync()
@@ -372,20 +551,112 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { await MessageAsync(Loc.T("Errors"), ex.Message); }
     }
 
-    private async Task CheckConflictsAsync()
+    private Task CheckConflictsAsync()
     {
         var findings = _store.CheckAllConflicts();
-        var text = findings.Count == 0
-            ? Loc.T("No conflicts found")
-            : string.Join("\n", findings.Select(f => $"{f.Code}: {f.Message}"));
-        await MessageAsync(Loc.T("Check all tunnels"), text);
+        var body = new StackPanel { Spacing = 10, Padding = new Thickness(16) };
+
+        if (findings.Count == 0)
+        {
+            body.Children.Add(new TextBlock { Text = Loc.T("No conflicts found"), Foreground = Secondary });
+        }
+        else
+        {
+            foreach (var group in findings.GroupBy(f => f.Severity).OrderByDescending(g => g.Key))
+            {
+                body.Children.Add(SectionHeader(group.Key.ToString()));
+                foreach (var f in group)
+                {
+                    var card = new StackPanel { Spacing = 2, Padding = new Thickness(10),
+                        BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
+                        BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"] };
+                    var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                    head.Children.Add(new FontIcon { Glyph = SeverityGlyph(f.Severity), FontSize = 15, Foreground = SeverityBrush(f.Severity) });
+                    head.Children.Add(new TextBlock { Text = $"{f.Code}: {f.Message}", TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+                    card.Children.Add(head);
+                    if (f.TunnelNames.Count > 0)
+                        card.Children.Add(new TextBlock { Text = string.Join(" ↔ ", f.TunnelNames), FontSize = 12, Foreground = Secondary });
+                    if (f.FixHint is { Length: > 0 })
+                        card.Children.Add(new TextBlock { Text = f.FixHint, FontSize = 12, Foreground = Secondary, TextWrapping = TextWrapping.Wrap });
+                    body.Children.Add(card);
+                }
+            }
+        }
+        OpenContentWindow(Loc.T("Check all tunnels"), body, 560, 520);
+        return Task.CompletedTask;
     }
 
     private async Task ShowLogsAsync()
     {
-        var lines = await _daemon.RecentLogAsync(400);
-        var text = string.Join("\n", lines.Select(l => $"{l.Time.LocalDateTime:HH:mm:ss} [{l.Level}] {l.Category}: {l.Message}"));
-        await MessageAsync(Loc.T("Logs"), string.IsNullOrEmpty(text) ? "—" : text, scroll: true);
+        var lines = await _daemon.RecentLogAsync(500);
+        var list = new StackPanel { Padding = new Thickness(12) };
+        if (lines.Count == 0)
+            list.Children.Add(new TextBlock { Text = "—", Foreground = Secondary });
+        foreach (var l in lines)
+        {
+            var row = new TextBlock
+            {
+                FontFamily = new FontFamily("Consolas"), FontSize = 12, TextWrapping = TextWrapping.Wrap,
+                Text = $"{l.Time.LocalDateTime:HH:mm:ss} [{l.Level}] {l.Category}: {l.Message}",
+                Foreground = l.Level.Equals("error", StringComparison.OrdinalIgnoreCase) ? SeverityBrush(FindingSeverity.Error)
+                           : l.Level.Equals("warn", StringComparison.OrdinalIgnoreCase) ? SeverityBrush(FindingSeverity.Warning)
+                           : (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"]
+            };
+            list.Children.Add(row);
+        }
+        var sv = new ScrollViewer { Content = list };
+        OpenContentWindow(Loc.T("Logs"), sv, 760, 520);
+    }
+
+    private void OpenContentWindow(string title, FrameworkElement content, int width, int height)
+    {
+        var win = new Window { Title = title };
+        var host = content is ScrollViewer ? content : new ScrollViewer { Content = content };
+        host.SetValue(Grid.RowProperty, 0);
+        win.Content = new Grid { Children = { host } };
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(win);
+            var id = Win32Interop.GetWindowIdFromWindow(hwnd);
+            AppWindow.GetFromWindowId(id).Resize(new Windows.Graphics.SizeInt32(width, height));
+        }
+        catch { }
+        win.Activate();
+    }
+
+    private static string SeverityGlyph(FindingSeverity s) => s switch
+    {
+        FindingSeverity.Error => "", // ErrorBadge
+        FindingSeverity.Warning => "", // Warning
+        _ => "" // Info
+    };
+    private static Brush SeverityBrush(FindingSeverity s) => new SolidColorBrush(s switch
+    {
+        FindingSeverity.Error => Colors.IndianRed,
+        FindingSeverity.Warning => Colors.Orange,
+        _ => Colors.SteelBlue
+    });
+
+    private async Task InstallHelperAsync()
+    {
+        // Register + start the TunHubHelper Windows service. Creating a service needs
+        // elevation, so we launch an elevated sc.exe (UAC prompt) — the macOS equivalent of the
+        // one-time administrator-password prompt.
+        var exe = Path.Combine(AppContext.BaseDirectory, "tunhub-helper.exe");
+        if (!File.Exists(exe)) { await MessageAsync(Loc.T("Errors"), $"tunhub-helper.exe not found next to the app ({exe})"); return; }
+        var script = $"sc.exe create TunHubHelper binPath= \"\\\"{exe}\\\"\" start= auto & sc.exe start TunHubHelper";
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe", Arguments = $"/c {script}",
+                UseShellExecute = true, Verb = "runas", CreateNoWindow = true
+            };
+            System.Diagnostics.Process.Start(psi);
+        }
+        catch (Exception ex) { await MessageAsync(Loc.T("Errors"), ex.Message); }
+        await Task.Delay(1500);
+        await PollAsync();
     }
 
     private async Task ShowSettingsAsync()

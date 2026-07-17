@@ -9,6 +9,7 @@
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
     </Grid.RowDefinitions>
 
@@ -24,7 +25,7 @@
     </CommandBar>
 
     <!-- Helper status strip -->
-    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Padding="14,2,14,8"
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Padding="14,2,14,6"
                 VerticalAlignment="Center">
       <Ellipse x:Name="HelperDot" Width="9" Height="9" Fill="Gray" VerticalAlignment="Center" />
       <TextBlock x:Name="HelperStatus" VerticalAlignment="Center" FontSize="12"
@@ -33,8 +34,17 @@
               Margin="12,0,0,0" />
     </StackPanel>
 
+    <!-- System component (helper service) not installed / not reachable -->
+    <InfoBar Grid.Row="2" x:Name="HelperBar" Margin="14,0,14,8" IsOpen="False" IsClosable="False"
+             Severity="Warning" Title="System component not running"
+             Message="TunHub needs a background service to manage tunnels.">
+      <InfoBar.ActionButton>
+        <Button x:Name="InstallHelperBtn" Content="Install system component" />
+      </InfoBar.ActionButton>
+    </InfoBar>
+
     <!-- Body -->
-    <Grid Grid.Row="2" ColumnSpacing="0" Padding="14,0,14,14">
+    <Grid Grid.Row="3" ColumnSpacing="0" Padding="14,0,14,14">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="240" />
         <ColumnDefinition Width="*" />
@@ -86,93 +96,100 @@
                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                    Text="Select a tunnel or import configs" />
 
-        <StackPanel x:Name="DetailPanel" Spacing="8" Visibility="Collapsed">
-          <TextBlock x:Name="DetailName" FontSize="22" FontWeight="SemiBold" />
-          <TextBlock x:Name="DetailKind" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        <Grid x:Name="DetailPanel" Visibility="Collapsed" RowSpacing="8">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
 
-          <InfoBar x:Name="FailureBar" IsOpen="False" Severity="Error" IsClosable="True"
+          <StackPanel Grid.Row="0" Spacing="2">
+            <TextBlock x:Name="DetailName" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock x:Name="DetailKind" FontSize="12"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+          </StackPanel>
+
+          <InfoBar Grid.Row="1" x:Name="FailureBar" IsOpen="False" Severity="Error" IsClosable="True"
                    Title="Connection failed">
             <InfoBar.ActionButton>
               <Button x:Name="RetryBtn" Content="Retry" />
             </InfoBar.ActionButton>
           </InfoBar>
 
-          <Pivot x:Name="DetailPivot">
+          <!-- Compact segmented tabs (macOS-style) -->
+          <SelectorBar Grid.Row="2" x:Name="DetailTabs">
+            <SelectorBarItem x:Name="TabOverview" Text="Overview" IsSelected="True" />
+            <SelectorBarItem x:Name="TabEditor" Text="Editor" />
+            <SelectorBarItem x:Name="TabStatus" Text="Status" />
+          </SelectorBar>
+
+          <Grid Grid.Row="3">
             <!-- Overview -->
-            <PivotItem Header="Overview">
-              <ScrollViewer>
-                <StackPanel Spacing="10" Padding="0,8,0,0">
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Ellipse x:Name="DetailDot" Width="12" Height="12" VerticalAlignment="Center" Fill="Gray" />
-                    <TextBlock x:Name="DetailStatus" VerticalAlignment="Center" />
-                  </StackPanel>
-
-                  <Border CornerRadius="8" BorderThickness="1" Padding="12"
-                          BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                          Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                    <StackPanel Spacing="6">
-                      <Grid ColumnSpacing="10">
-                        <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="110" />
-                          <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Endpoint" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" x:Name="OvEndpoint" Text="—" />
-                      </Grid>
-                      <Grid ColumnSpacing="10">
-                        <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="110" />
-                          <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Routes" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" x:Name="OvRoutes" Text="—" TextWrapping="Wrap" />
-                      </Grid>
-                      <Grid ColumnSpacing="10">
-                        <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="110" />
-                          <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="External IP" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                          <TextBlock x:Name="OvExternalIp" Text="—" VerticalAlignment="Center" />
-                          <Button x:Name="CheckIpBtn" Content="Check" FontSize="11" Padding="6,1" />
-                        </StackPanel>
-                      </Grid>
-                      <Grid ColumnSpacing="10">
-                        <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="110" />
-                          <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Traffic" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" x:Name="OvTraffic" Text="—" />
-                      </Grid>
-                    </StackPanel>
-                  </Border>
-
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button x:Name="StartBtn" Content="Start" Style="{ThemeResource AccentButtonStyle}" />
-                    <Button x:Name="StopBtn" Content="Stop" />
-                    <Button x:Name="DeleteBtn" Content="Delete" />
-                  </StackPanel>
+            <ScrollViewer x:Name="OverviewPane">
+              <StackPanel Spacing="10" Padding="0,4,0,0">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Ellipse x:Name="DetailDot" Width="12" Height="12" VerticalAlignment="Center" Fill="Gray" />
+                  <TextBlock x:Name="DetailStatus" VerticalAlignment="Center" />
                 </StackPanel>
-              </ScrollViewer>
-            </PivotItem>
+
+                <Border CornerRadius="8" BorderThickness="1" Padding="12"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                  <StackPanel Spacing="6">
+                    <Grid ColumnSpacing="10">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110" /><ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Grid.Column="0" Text="Endpoint" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                      <TextBlock Grid.Column="1" x:Name="OvEndpoint" Text="—" IsTextSelectionEnabled="True" />
+                    </Grid>
+                    <Grid ColumnSpacing="10">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110" /><ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Grid.Column="0" Text="Routes" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                      <TextBlock Grid.Column="1" x:Name="OvRoutes" Text="—" TextWrapping="Wrap" />
+                    </Grid>
+                    <Grid ColumnSpacing="10">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110" /><ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Grid.Column="0" Text="External IP" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <TextBlock x:Name="OvExternalIp" Text="—" VerticalAlignment="Center" IsTextSelectionEnabled="True" />
+                        <Button x:Name="CheckIpBtn" Content="Check" FontSize="11" Padding="6,1" />
+                      </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="10">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110" /><ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Grid.Column="0" Text="Traffic" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                      <TextBlock Grid.Column="1" x:Name="OvTraffic" Text="—" />
+                    </Grid>
+                  </StackPanel>
+                </Border>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button x:Name="StartBtn" Content="Start" Style="{ThemeResource AccentButtonStyle}" />
+                  <Button x:Name="StopBtn" Content="Stop" />
+                  <Button x:Name="DeleteBtn" Content="Delete" />
+                </StackPanel>
+              </StackPanel>
+            </ScrollViewer>
 
             <!-- Editor -->
-            <PivotItem Header="Editor">
-              <ScrollViewer>
-                <StackPanel x:Name="EditorHost" Spacing="10" Padding="0,8,0,0" />
-              </ScrollViewer>
-            </PivotItem>
+            <ScrollViewer x:Name="EditorPane" Visibility="Collapsed">
+              <StackPanel x:Name="EditorHost" Spacing="12" Padding="0,4,4,0" />
+            </ScrollViewer>
 
             <!-- Status -->
-            <PivotItem Header="Status">
-              <ScrollViewer>
-                <StackPanel x:Name="StatusHost" Spacing="8" Padding="0,8,0,0" />
-              </ScrollViewer>
-            </PivotItem>
-          </Pivot>
-        </StackPanel>
+            <ScrollViewer x:Name="StatusPane" Visibility="Collapsed">
+              <StackPanel x:Name="StatusHost" Spacing="8" Padding="0,4,0,0" />
+            </ScrollViewer>
+          </Grid>
+        </Grid>
       </Grid>
     </Grid>
   </Grid>

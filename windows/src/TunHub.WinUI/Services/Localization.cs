@@ -101,7 +101,23 @@ public static class Loc
             ["Disconnect all tunnels before quitting?"] = "Отключить все туннели перед выходом?",
             ["Some tunnels are still connected. You can disconnect them now or leave them running."] = "Некоторые туннели ещё подключены. Можно отключить их сейчас или оставить работать.",
             ["Disconnect and quit"] = "Отключить и выйти",
-            ["Quit, keep running"] = "Выйти, оставить включёнными"
+            ["Quit, keep running"] = "Выйти, оставить включёнными",
+            ["Interface"] = "Интерфейс",
+            ["Private key"] = "Приватный ключ",
+            ["Public key"] = "Публичный ключ",
+            ["Generate"] = "Сгенерировать",
+            ["Add peer"] = "Добавить peer",
+            ["Remove peer"] = "Удалить peer",
+            ["Options"] = "Опции",
+            ["Kill switch (block traffic outside the tunnel)"] = "Kill switch (блокировать трафик мимо туннеля)",
+            ["Connect on app launch"] = "Подключать при запуске приложения",
+            ["Cancel"] = "Отмена",
+            ["OpenVPN profile"] = "Профиль OpenVPN",
+            ["Credentials"] = "Учётные данные",
+            ["OTP is asked at connect"] = "OTP спрашивается при подключении",
+            ["System component not running"] = "Системный компонент не запущен",
+            ["TunHub needs a background service to manage tunnels."] = "TunHub нужен фоновый сервис для управления туннелями.",
+            ["Install system component"] = "Установить системный компонент"
         }
     };
 }
