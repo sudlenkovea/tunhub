@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Media;
 using TunHub.App.Services;
 using TunHub.Core;
 using TunHub.Engine.Platform;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage.Pickers;
 using Windows.UI;
 
@@ -671,31 +672,72 @@ public sealed partial class MainWindow : Window
 
     private async Task ShowLogsAsync()
     {
-        var lines = await _daemon.RecentLogAsync(500);
-        var list = new StackPanel { Padding = new Thickness(12) };
-        if (lines.Count == 0)
-            list.Children.Add(new TextBlock { Text = "—", Foreground = Secondary });
-        foreach (var l in lines)
+        var box = new TextBox
         {
-            var row = new TextBlock
-            {
-                FontFamily = new FontFamily("Consolas"), FontSize = 12, TextWrapping = TextWrapping.Wrap,
-                Text = $"{l.Time.LocalDateTime:HH:mm:ss} [{l.Level}] {l.Category}: {l.Message}",
-                Foreground = l.Level.Equals("error", StringComparison.OrdinalIgnoreCase) ? SeverityBrush(FindingSeverity.Error)
-                           : l.Level.Equals("warn", StringComparison.OrdinalIgnoreCase) ? SeverityBrush(FindingSeverity.Warning)
-                           : (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"]
-            };
-            list.Children.Add(row);
-        }
-        var sv = new ScrollViewer { Content = list };
-        OpenContentWindow(Loc.T("Logs"), sv, 760, 520);
+            Text = await BuildLogTextAsync(),
+            IsReadOnly = true, AcceptsReturn = true, IsSpellCheckEnabled = false,
+            TextWrapping = TextWrapping.NoWrap,
+            FontFamily = new FontFamily("Consolas"), FontSize = 12,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+        ScrollViewer.SetVerticalScrollBarVisibility(box, ScrollBarVisibility.Auto);
+        ScrollViewer.SetHorizontalScrollBarVisibility(box, ScrollBarVisibility.Auto);
+
+        var copy = new Button { Content = Loc.T("Copy all") };
+        copy.Click += (_, _) =>
+        {
+            var dp = new DataPackage();
+            dp.SetText(box.Text);
+            Clipboard.SetContent(dp);
+        };
+        var refresh = new Button { Content = Loc.T("Refresh") };
+        refresh.Click += async (_, _) => box.Text = await BuildLogTextAsync();
+
+        var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Padding = new Thickness(12, 8, 12, 4) };
+        bar.Children.Add(copy);
+        bar.Children.Add(refresh);
+
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition());
+        Grid.SetRow(bar, 0); grid.Children.Add(bar);
+        var host = new Border { Child = box, Padding = new Thickness(12, 0, 12, 12) };
+        Grid.SetRow(host, 1); grid.Children.Add(host);
+
+        OpenContentWindow(Loc.T("Logs"), grid, 860, 580, scroll: false);
     }
 
-    private void OpenContentWindow(string title, FrameworkElement content, int width, int height)
+    /// <summary>Combined, copyable log: this app's own client log + the helper's recent log.</summary>
+    private async Task<string> BuildLogTextAsync()
+    {
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            var appLog = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TunHub", "app.log");
+            if (File.Exists(appLog))
+            {
+                sb.AppendLine("=== App (client) log ===");
+                sb.AppendLine(string.Join("\n", File.ReadLines(appLog).Reverse().Take(200).Reverse()));
+                sb.AppendLine();
+            }
+        }
+        catch { }
+
+        sb.AppendLine("=== Helper (service) log ===");
+        var lines = await _daemon.RecentLogAsync(1000);
+        if (lines.Count == 0)
+            sb.AppendLine(_helperReachable ? "(empty)" : "(helper not reachable)");
+        else
+            foreach (var l in lines)
+                sb.AppendLine($"{l.Time.LocalDateTime:yyyy-MM-dd HH:mm:ss} [{l.Level,-5}] {l.Category}: {l.Message}");
+        return sb.ToString();
+    }
+
+    private void OpenContentWindow(string title, FrameworkElement content, int width, int height, bool scroll = true)
     {
         var win = new Window { Title = title };
-        var host = content is ScrollViewer ? content : new ScrollViewer { Content = content };
-        host.SetValue(Grid.RowProperty, 0);
+        FrameworkElement host = (!scroll || content is ScrollViewer) ? content : new ScrollViewer { Content = content };
         win.Content = new Grid { Children = { host } };
         try
         {
@@ -732,7 +774,7 @@ public sealed partial class MainWindow : Window
             var expected = $"{TunHubInfo.ProtocolVersion}+{TunHub.Engine.BuildStamp.Value}";
             if (version == expected)
             {
-                HelperStatus.Text = Loc.T("Helper: connected");
+                HelperStatus.Text = $"{Loc.T("Helper: connected")} · v{version}";
                 HelperDot.Fill = new SolidColorBrush(Colors.MediumSeaGreen);
                 HelperBar.IsOpen = false;
             }

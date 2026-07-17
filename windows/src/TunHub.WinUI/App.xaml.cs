@@ -98,7 +98,9 @@ public partial class App : Application
         {
             ToolTipText = "TunHub",
             ContextFlyout = _trayMenu,
-            ContextMenuMode = ContextMenuMode.SecondWindow,
+            // Classic Win32 popup menu built from the flyout items — reliable for a tray icon
+            // (the XAML SecondWindow flyout rendered empty). It invokes each item's Command.
+            ContextMenuMode = ContextMenuMode.PopupMenu,
             LeftClickCommand = new RelayCommand(ShowWindow)
         };
         try { _tray.IconSource = new BitmapImage(new Uri("ms-appx:///Assets/TunHub.ico")); }
@@ -114,9 +116,8 @@ public partial class App : Application
         if (_trayMenu is null) return;
         _trayMenu.Items.Clear();
 
-        var open = new MenuFlyoutItem { Text = Loc.T("Open window") };
-        open.Click += (_, _) => ShowWindow();
-        _trayMenu.Items.Add(open);
+        // In PopupMenu mode H.NotifyIcon invokes each item's Command (not Click).
+        _trayMenu.Items.Add(new MenuFlyoutItem { Text = Loc.T("Open window"), Command = new RelayCommand(ShowWindow) });
         _trayMenu.Items.Add(new MenuFlyoutSeparator());
 
         var tunnels = SafeTunnels();
@@ -124,20 +125,21 @@ public partial class App : Application
         {
             var phase = States.TryGetValue(t.Id, out var p) ? p : TunnelPhase.Stopped;
             var running = phase is TunnelPhase.Up or TunnelPhase.Degraded or TunnelPhase.Starting;
-            var item = new MenuFlyoutItem { Text = (running ? "● " : "○ ") + t.Name };
             var cfg = t; var isRunning = running;
-            item.Click += async (_, _) => await ToggleTunnelAsync(cfg, isRunning);
-            _trayMenu.Items.Add(item);
+            _trayMenu.Items.Add(new MenuFlyoutItem
+            {
+                Text = (running ? "● " : "○ ") + t.Name,
+                Command = new RelayCommand(() => _ = ToggleTunnelAsync(cfg, isRunning))
+            });
         }
         if (tunnels.Count > 0) _trayMenu.Items.Add(new MenuFlyoutSeparator());
 
-        var stopAll = new MenuFlyoutItem { Text = Loc.T("Stop all") };
-        stopAll.Click += async (_, _) => { try { await Daemon.StopAllAsync(); } catch (Exception ex) { Log("tray-stopall", ex); } };
-        _trayMenu.Items.Add(stopAll);
-
-        var quit = new MenuFlyoutItem { Text = Loc.T("Quit TunHub") };
-        quit.Click += (_, _) => QuitNow();
-        _trayMenu.Items.Add(quit);
+        _trayMenu.Items.Add(new MenuFlyoutItem
+        {
+            Text = Loc.T("Stop all"),
+            Command = new RelayCommand(() => { try { _ = Daemon.StopAllAsync(); } catch (Exception ex) { Log("tray-stopall", ex); } })
+        });
+        _trayMenu.Items.Add(new MenuFlyoutItem { Text = Loc.T("Quit TunHub"), Command = new RelayCommand(QuitNow) });
     }
 
     private static List<TunnelConfig> SafeTunnels()
