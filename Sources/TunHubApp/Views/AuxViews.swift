@@ -219,8 +219,16 @@ struct DaemonUpdateSheet: View {
 
     @ViewBuilder var actionButtons: some View {
         if state.daemonBusy {
-            ProgressView("Reinstalling… (confirm the password in the system dialog)")
-                .padding(.vertical, 6)
+            VStack(spacing: 10) {
+                ProgressView("Reinstalling… (confirm the password in the system dialog)")
+                    .padding(.vertical, 6)
+                // Let the user bail out of the install/update and quit the app.
+                Button("Cancel and quit") {
+                    state.showDaemonUpdateSheet = false
+                    NSApp.terminate(nil)
+                }
+                .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
+            }
         } else {
             VStack(spacing: 8) {
                 Button {

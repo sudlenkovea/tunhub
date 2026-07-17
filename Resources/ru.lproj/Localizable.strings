@@ -132,6 +132,9 @@
 "Check all tunnels for route/DNS conflicts" = "Проверить все туннели на конфликты маршрутов/DNS";
 "Open the log window" = "Открыть окно логов";
 
+/* Daemon update sheet */
+"Cancel and quit" = "Отменить и выйти";
+
 /* Quit prompt */
 "Disconnect all tunnels before quitting?" = "Отключить все туннели перед выходом?";
 "Some tunnels are still connected. You can disconnect them now or leave them running." = "Некоторые туннели ещё подключены. Можно отключить их сейчас или оставить работать.";
