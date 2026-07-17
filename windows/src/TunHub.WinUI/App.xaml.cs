@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows.Input;
 using H.NotifyIcon;
 using Microsoft.UI.Xaml;
@@ -18,18 +19,58 @@ public partial class App : Application
 
     public App()
     {
-        // Apply the saved interface language before any UI is built.
-        Loc.Apply(AppSettings.Load().Language);
+        // Surface any unhandled exception in a visible dialog (and log it) so a silent
+        // startup crash is immediately obvious instead of hidden in a log file.
+        UnhandledException += (_, e) => { ShowError("UI", e.Exception); e.Handled = true; };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => ShowError("domain", e.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, e) => { Log("task", e.Exception); e.SetObserved(); };
+
+        try { Loc.Apply(AppSettings.Load().Language); } catch (Exception ex) { ShowError("loc", ex); }
         InitializeComponent();
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int MessageBoxW(IntPtr hWnd, string text, string caption, uint type);
+
+    /// <summary>Show a native error dialog (works even before/without a XAML root) and log it.</summary>
+    public static void ShowError(string where, Exception? ex)
+    {
+        Log(where, ex);
+        try
+        {
+            var msg = ex?.ToString() ?? "unknown error";
+            if (msg.Length > 3000) msg = msg.Substring(0, 3000) + "…";
+            MessageBoxW(IntPtr.Zero, msg, $"TunHub — error ({where})", 0x10 /* MB_ICONERROR */);
+        }
+        catch { /* nothing more we can do */ }
+    }
+
+    /// <summary>Append a diagnostic line to %LOCALAPPDATA%\TunHub\app.log.</summary>
+    public static void Log(string where, Exception? ex)
+    {
+        try
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TunHub");
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(Path.Combine(dir, "app.log"),
+                $"{DateTimeOffset.Now:u} [{where}] {ex}\n");
+        }
+        catch { /* best effort */ }
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new MainWindow();
-        // Closing the window hides it to the tray instead of exiting (menu-bar-style app).
-        _window.HideToTrayRequested += () => _window?.AppWindowHide();
-        InitTray();
-        _window.Activate();
+        try
+        {
+            _window = new MainWindow();
+            // Closing the window hides it to the tray instead of exiting (menu-bar-style app).
+            _window.HideToTrayRequested += () => _window?.AppWindowHide();
+            _window.Activate();            // show the window FIRST — never gate it on the tray
+        }
+        catch (Exception ex) { ShowError("launch (main window)", ex); return; }
+
+        // The tray icon is a nice-to-have; a failure here must not take the app down.
+        try { InitTray(); } catch (Exception ex) { ShowError("tray", ex); }
     }
 
     private void InitTray()
@@ -51,9 +92,11 @@ public partial class App : Application
         {
             ToolTipText = "TunHub",
             ContextFlyout = menu,
-            IconSource = new BitmapImage(new Uri("ms-appx:///Assets/TunHub.ico")),
             LeftClickCommand = new RelayCommand(ShowWindow)
         };
+        // Icon is best-effort: a bad URI must not throw out of ForceCreate.
+        try { _tray.IconSource = new BitmapImage(new Uri("ms-appx:///Assets/TunHub.ico")); }
+        catch (Exception ex) { Log("tray-icon", ex); }
         _tray.ForceCreate();
     }
 
