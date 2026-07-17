@@ -85,14 +85,14 @@ if (-not $env:SKIP_MSI) {
         dotnet tool install --global wix --version 5.0.2 | Out-Null
         $env:Path += ";$env:USERPROFILE\.dotnet\tools"
     }
-    $Msi = "dist\TunHub-0.8.0-$Rid.msi"
+    $Msi = "dist\TunHub-0.8.1-$Rid.msi"
     wix build installer\TunHub.wxs -d DistDir=$Dist -arch ($Rid -replace 'win-','') -o $Msi
     if (Test-Path $Msi) { Write-Host "    MSI: $Msi" }
 }
 
 Write-Host ""
 Write-Host "Done."
-Write-Host "  * Installer:  dist\TunHub-0.8.0-$Rid.msi  (installs app + registers TunHubHelper service)"
+Write-Host "  * Installer:  dist\TunHub-0.8.1-$Rid.msi  (installs app + registers TunHubHelper service)"
 Write-Host "  * Portable:   $Dist\TunHub.exe  (register the service manually if not using the MSI):"
 Write-Host "      sc.exe create TunHubHelper binPath= `"$((Resolve-Path "$Dist\tunhub-helper.exe" -ErrorAction SilentlyContinue).Path)`" start= auto"
 Write-Host "      sc.exe start TunHubHelper"

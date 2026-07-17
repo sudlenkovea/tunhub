@@ -1,7 +1,7 @@
 import Foundation
 
 public let kDaemonMachService = TunHub.machService
-public let kDaemonProtocolVersion = "0.8.0"
+public let kDaemonProtocolVersion = "0.8.1"
 
 /// Team ID for the XPC code-signing requirement. Empty = check disabled (dev/ad-hoc).
 public let kTeamID = TunHub.teamID

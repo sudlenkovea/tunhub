@@ -16,7 +16,7 @@ public static class TunHubInfo
     public const string IpcEndpoint = "tunhub.daemon.ipc";
 
     /// <summary>Wire protocol version between UI and helper — both parts must match.</summary>
-    public const string ProtocolVersion = "0.8.0";
+    public const string ProtocolVersion = "0.8.1";
 
     /// <summary>Core binaries bundled next to the helper (a single AWG core covers 1.5 &amp; 2.0).</summary>
     public static class Core

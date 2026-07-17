@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- TunHub for Windows — MSI package (WiX v4/v5). Build on Windows only:
-       wix build installer\TunHub.wxs -d DistDir=dist\TunHub -o dist\TunHub-0.8.0.msi
+       wix build installer\TunHub.wxs -d DistDir=dist\TunHub -o dist\TunHub-0.8.1.msi
      DistDir is the publish output from build.ps1 (WinUI app + helper + bundled cores). -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 
   <Package Name="TunHub"
            Manufacturer="TunHub"
-           Version="0.8.0.0"
+           Version="0.8.1.0"
            UpgradeCode="7E3B9A54-0C2F-4E7A-9C1B-9B0F0A2D6E11"
            Scope="perMachine"
            Compressed="yes">

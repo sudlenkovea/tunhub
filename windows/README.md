@@ -41,7 +41,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 The script builds the Go cores for windows/amd64, fetches `wintun.dll`, optionally stages the
 OpenVPN core, stamps the build, publishes the WinUI app + helper (self-contained) into
-`dist\TunHub`, and builds an **MSI** (`dist\TunHub-0.8.0-win-x64.msi`) via WiX that installs
+`dist\TunHub`, and builds an **MSI** (`dist\TunHub-0.8.1-win-x64.msi`) via WiX that installs
 the app, registers the `TunHubHelper` service and adds a Start-menu shortcut. Set `SKIP_MSI=1`
 for just the portable folder.
 
