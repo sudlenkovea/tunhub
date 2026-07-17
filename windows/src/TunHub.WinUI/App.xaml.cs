@@ -14,8 +14,13 @@ public partial class App : Application
     private MainWindow? _window;
     private TaskbarIcon? _tray;
 
-    /// <summary>Shared daemon client used by the tray menu (the window has its own instance).</summary>
+    /// <summary>Shared daemon client + store used by the tray menu (the window has its own too).</summary>
     public static DaemonClient Daemon { get; } = new();
+    public static AppStore Store { get; } = new();
+    /// <summary>Latest per-tunnel phase, pushed by the main window's poll — the tray menu reads it.</summary>
+    internal static Dictionary<Guid, TunnelPhase> States = new();
+
+    private MenuFlyout? _trayMenu;
 
     public App()
     {
@@ -75,29 +80,71 @@ public partial class App : Application
 
     private void InitTray()
     {
-        var open = new MenuFlyoutItem { Text = Loc.T("Open window") };
-        open.Click += (_, _) => ShowWindow();
-        var stop = new MenuFlyoutItem { Text = Loc.T("Stop all") };
-        stop.Click += async (_, _) => { try { await Daemon.StopAllAsync(); } catch { } };
-        var quit = new MenuFlyoutItem { Text = Loc.T("Quit TunHub") };
-        quit.Click += async (_, _) => await QuitAsync();
-
-        var menu = new MenuFlyout();
-        menu.Items.Add(open);
-        menu.Items.Add(stop);
-        menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(quit);
+        _trayMenu = new MenuFlyout();
+        // Rebuild the menu each time it opens so the tunnel list + statuses are current.
+        _trayMenu.Opening += (_, _) => RebuildTrayMenu();
 
         _tray = new TaskbarIcon
         {
             ToolTipText = "TunHub",
-            ContextFlyout = menu,
+            ContextFlyout = _trayMenu,
+            ContextMenuMode = ContextMenuMode.SecondWindow,
             LeftClickCommand = new RelayCommand(ShowWindow)
         };
-        // Icon is best-effort: a bad URI must not throw out of ForceCreate.
         try { _tray.IconSource = new BitmapImage(new Uri("ms-appx:///Assets/TunHub.ico")); }
         catch (Exception ex) { Log("tray-icon", ex); }
         _tray.ForceCreate();
+        RebuildTrayMenu();
+    }
+
+    /// <summary>Tray menu: Open, the tunnel list (click toggles start/stop, like the macOS menu bar),
+    /// Stop all, Quit.</summary>
+    private void RebuildTrayMenu()
+    {
+        if (_trayMenu is null) return;
+        _trayMenu.Items.Clear();
+
+        var open = new MenuFlyoutItem { Text = Loc.T("Open window") };
+        open.Click += (_, _) => ShowWindow();
+        _trayMenu.Items.Add(open);
+        _trayMenu.Items.Add(new MenuFlyoutSeparator());
+
+        var tunnels = SafeTunnels();
+        foreach (var t in tunnels)
+        {
+            var phase = States.TryGetValue(t.Id, out var p) ? p : TunnelPhase.Stopped;
+            var running = phase is TunnelPhase.Up or TunnelPhase.Degraded or TunnelPhase.Starting;
+            var item = new MenuFlyoutItem { Text = (running ? "● " : "○ ") + t.Name };
+            var cfg = t; var isRunning = running;
+            item.Click += async (_, _) => await ToggleTunnelAsync(cfg, isRunning);
+            _trayMenu.Items.Add(item);
+        }
+        if (tunnels.Count > 0) _trayMenu.Items.Add(new MenuFlyoutSeparator());
+
+        var stopAll = new MenuFlyoutItem { Text = Loc.T("Stop all") };
+        stopAll.Click += async (_, _) => { try { await Daemon.StopAllAsync(); } catch (Exception ex) { Log("tray-stopall", ex); } };
+        _trayMenu.Items.Add(stopAll);
+
+        var quit = new MenuFlyoutItem { Text = Loc.T("Quit TunHub") };
+        quit.Click += (_, _) => QuitNow();
+        _trayMenu.Items.Add(quit);
+    }
+
+    private static List<TunnelConfig> SafeTunnels()
+    {
+        try { return Store.LoadAll(); } catch { return new List<TunnelConfig>(); }
+    }
+
+    private async Task ToggleTunnelAsync(TunnelConfig t, bool running)
+    {
+        try
+        {
+            if (running) { await Daemon.StopTunnelAsync(t.Id); return; }
+            // OpenVPN may need credentials/OTP — that flow lives in the window.
+            if (t.Kind == TunnelKind.OpenVpn) { ShowWindow(); return; }
+            await Daemon.StartTunnelAsync(Store.ResolveSpec(t));
+        }
+        catch (Exception ex) { Log("tray-toggle", ex); }
     }
 
     private void ShowWindow()
@@ -107,38 +154,12 @@ public partial class App : Application
         _window.Activate();
     }
 
-    /// <summary>Quit; if any tunnel is connected, ask whether to disconnect first (macOS parity).</summary>
-    private async Task QuitAsync()
+    /// <summary>Quit for certain. Application.Exit() alone is unreliable while the tray icon and
+    /// poll timer keep the message loop alive, so terminate the process.</summary>
+    private void QuitNow()
     {
-        try
-        {
-            var states = await Daemon.RuntimeStatesAsync();
-            var anyRunning = states.Any(s => s.Phase is TunnelPhase.Up or TunnelPhase.Degraded or TunnelPhase.Starting);
-            if (anyRunning && _window?.Content?.XamlRoot is { } root)
-            {
-                ShowWindow();
-                var dialog = new ContentDialog
-                {
-                    Title = Loc.T("Disconnect all tunnels before quitting?"),
-                    Content = Loc.T("Some tunnels are still connected. You can disconnect them now or leave them running."),
-                    PrimaryButtonText = Loc.T("Disconnect and quit"),
-                    SecondaryButtonText = Loc.T("Quit, keep running"),
-                    CloseButtonText = Loc.T("Cancel"),
-                    DefaultButton = ContentDialogButton.Primary,
-                    XamlRoot = root
-                };
-                var result = await dialog.ShowAsync();
-                if (result == ContentDialogResult.None) return;                 // Cancel
-                if (result == ContentDialogResult.Primary)
-                    try { await Daemon.StopAllAsync(); } catch { }
-            }
-        }
-        catch { /* fall through to exit */ }
         try { _tray?.Dispose(); } catch { }
         try { _window?.Close(); } catch { }
-        // Application.Exit() alone is unreliable while the tray icon + poll timer keep the
-        // message loop alive, so terminate the process for certain.
-        try { Exit(); } catch { }
         Environment.Exit(0);
     }
 }

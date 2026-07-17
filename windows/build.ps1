@@ -63,7 +63,9 @@ if (-not (Test-Path "$Cores\openvpn\openvpn.exe")) {
         if ($p.ExitCode -ne 0) { Write-Warning "msiexec extract failed ($($p.ExitCode))" }
         $exe = Get-ChildItem -Recurse $extract -Filter openvpn.exe -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($exe) {
-            Copy-Item (Join-Path $exe.DirectoryName "*") "$Cores\openvpn\" -Recurse -Force
+            # Only openvpn.exe + its DLLs (drop openvpn-gui.exe, openvpnserv.exe, docs, samples).
+            Copy-Item $exe.FullName "$Cores\openvpn\" -Force
+            Get-ChildItem $exe.DirectoryName -Filter *.dll | ForEach-Object { Copy-Item $_.FullName "$Cores\openvpn\" -Force }
             # Stage license / copyright files (GPLv2 compliance) into a separate licenses dir.
             New-Item -ItemType Directory -Force -Path "$Cores\_licenses" | Out-Null
             Get-ChildItem -Recurse $extract -File -ErrorAction SilentlyContinue |

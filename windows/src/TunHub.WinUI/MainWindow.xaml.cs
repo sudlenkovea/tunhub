@@ -453,6 +453,9 @@ public sealed partial class MainWindow : Window
             var phase = _runtime.TryGetValue(item.Config.Id, out var s) ? s.Phase : TunnelPhase.Stopped;
             item.SetPhase(phase);
         }
+        // Share phases with the tray menu.
+        App.States = _items.ToDictionary(i => i.Config.Id,
+            i => _runtime.TryGetValue(i.Config.Id, out var st) ? st.Phase : TunnelPhase.Stopped);
         UpdateDetail();
     }
 
@@ -706,24 +709,55 @@ public sealed partial class MainWindow : Window
 
     private async Task InstallHelperAsync()
     {
-        // Register + start the TunHubHelper Windows service. Creating a service needs
-        // elevation, so we launch an elevated sc.exe (UAC prompt) — the macOS equivalent of the
-        // one-time administrator-password prompt.
         var exe = Path.Combine(AppContext.BaseDirectory, "tunhub-helper.exe");
         if (!File.Exists(exe)) { await MessageAsync(Loc.T("Errors"), $"tunhub-helper.exe not found next to the app ({exe})"); return; }
-        var script = $"sc.exe create TunHubHelper binPath= \"\\\"{exe}\\\"\" start= auto & sc.exe start TunHubHelper";
+        var data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "TunHub");
+
+        // Elevated + windowless: create the data dir, grant BUILTIN\Users access (so the app can
+        // reach the SYSTEM service's local socket), then register + start the service. One native
+        // UAC prompt, no cmd window (PowerShell runs hidden). SID S-1-5-32-545 = Users.
+        var ps =
+            $"New-Item -ItemType Directory -Force -Path '{data}' | Out-Null; " +
+            $"icacls '{data}' /grant '*S-1-5-32-545:(OI)(CI)M' /T | Out-Null; " +
+            "$s = Get-Service TunHubHelper -ErrorAction SilentlyContinue; " +
+            $"if (-not $s) {{ New-Service -Name TunHubHelper -BinaryPathName '\"{exe}\"' -StartupType Automatic -DisplayName 'TunHub Helper' | Out-Null }}; " +
+            "Start-Service TunHubHelper";
+        var b64 = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(ps));
+
+        // macOS-style: a modal spinner while the component installs and the service answers.
+        var ring = new ProgressRing { IsActive = true, Width = 40, Height = 40 };
+        var panel = new StackPanel { Spacing = 14, HorizontalAlignment = HorizontalAlignment.Center };
+        panel.Children.Add(ring);
+        panel.Children.Add(new TextBlock { Text = Loc.T("Installing… (confirm the Windows prompt)"), TextWrapping = TextWrapping.Wrap, HorizontalAlignment = HorizontalAlignment.Center });
+        var dialog = new ContentDialog { Title = Loc.T("Install system component"), Content = panel, XamlRoot = Root.XamlRoot };
+        _ = dialog.ShowAsync();
+
         try
         {
             var psi = new System.Diagnostics.ProcessStartInfo
             {
-                FileName = "cmd.exe", Arguments = $"/c {script}",
-                UseShellExecute = true, Verb = "runas", CreateNoWindow = true
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -WindowStyle Hidden -EncodedCommand {b64}",
+                UseShellExecute = true, Verb = "runas",
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
             };
             System.Diagnostics.Process.Start(psi);
         }
-        catch (Exception ex) { await MessageAsync(Loc.T("Errors"), ex.Message); }
-        await Task.Delay(1500);
+        catch (Exception ex)   // includes UAC cancel (Win32 1223)
+        {
+            App.Log("install", ex);
+            dialog.Hide();
+            await MessageAsync(Loc.T("Install system component"), Loc.T("Installation was cancelled or failed."));
+            return;
+        }
+
+        // Wait for the service to come up and answer, up to ~20s.
+        for (int i = 0; i < 40 && !await _daemon.PingAsync(); i++) await Task.Delay(500);
+        dialog.Hide();
         await PollAsync();
+        if (!_helperReachable)
+            await MessageAsync(Loc.T("Install system component"),
+                Loc.T("The component was installed but isn't responding yet. Check the TunHubHelper service, or try again."));
     }
 
     private async Task ShowSettingsAsync()

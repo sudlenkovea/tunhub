@@ -121,7 +121,10 @@ public static class Loc
             ["{0} routes"] = "{0} маршрутов",
             ["split tunnel — not routed"] = "split-туннель — не маршрутизируется",
             ["check failed (blocked or no route)"] = "проверка не удалась (заблокировано / нет маршрута)",
-            ["checking…"] = "проверяю…"
+            ["checking…"] = "проверяю…",
+            ["Installing… (confirm the Windows prompt)"] = "Устанавливаю… (подтвердите системный запрос)",
+            ["Installation was cancelled or failed."] = "Установка отменена или не удалась.",
+            ["The component was installed but isn't responding yet. Check the TunHubHelper service, or try again."] = "Компонент установлен, но пока не отвечает. Проверьте службу TunHubHelper или повторите."
         }
     };
 }
