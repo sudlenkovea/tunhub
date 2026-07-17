@@ -1,0 +1,68 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # ── macOS: native Swift app → .dmg ────────────────────────────────────────
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build app + DMG (ad-hoc signed)
+        run: |
+          chmod +x *.sh
+          ./make-dmg.sh
+        env:
+          IDENTITY: "-"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: TunHub-macos-dmg
+          path: dist/TunHub.dmg
+          if-no-files-found: error
+
+  # ── Windows: native WinUI 3 app → .msi ────────────────────────────────────
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Run Core/Engine unit tests
+        run: dotnet test tests/TunHub.Core.Tests/TunHub.Core.Tests.csproj -c Release
+
+      - name: Build app + helper + MSI
+        shell: pwsh
+        run: .\build.ps1
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: TunHub-windows-msi
+          path: windows/dist/*.msi
+          if-no-files-found: error
