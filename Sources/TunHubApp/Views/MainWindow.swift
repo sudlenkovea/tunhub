@@ -287,9 +287,6 @@ struct OverviewView: View {
                                         .foregroundStyle(.secondary)
                                         .help(detail)   // hover shows the full explanation
                                 }
-                                Button("Check") { state.fetchExternalIP(config) }
-                                    .controlSize(.small)
-                                    .disabled(!state.isRunning(config))
                             }
                             .help(state.externalIPDetails[config.id] ?? "")
                         }
