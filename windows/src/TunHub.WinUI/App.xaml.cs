@@ -32,7 +32,17 @@ public partial class App : Application
             $"{t.Id}:{(States.TryGetValue(t.Id, out var p) ? p : TunnelPhase.Stopped)}"));
         if (sig == _traySig) return;
         _traySig = sig;
-        try { RebuildTrayMenu(); } catch (Exception ex) { Log("tray-refresh", ex); }
+        try { RebuildTrayMenu(); UpdateTrayIcon(); } catch (Exception ex) { Log("tray-refresh", ex); }
+    }
+
+    /// <summary>Swap the tray icon (green when any tunnel is up) and tooltip.</summary>
+    private void UpdateTrayIcon()
+    {
+        if (_tray is null) return;
+        var anyUp = States.Values.Any(p => p is TunnelPhase.Up or TunnelPhase.Degraded);
+        _tray.ToolTipText = anyUp ? "TunHub — connected" : "TunHub";
+        try { _tray.IconSource = new BitmapImage(new Uri($"ms-appx:///Assets/{(anyUp ? "TunHub-on" : "TunHub")}.ico")); }
+        catch (Exception ex) { Log("tray-icon", ex); }
     }
 
     public App()
@@ -141,7 +151,7 @@ public partial class App : Application
             _trayMenu.Items.Add(new MenuFlyoutItem
             {
                 Text = Loc.T("Stop all"),
-                Command = new RelayCommand(() => { try { _ = Daemon.StopAllAsync(); } catch (Exception ex) { Log("tray-stopall", ex); } })
+                Command = new RelayCommand(() => _ = StopAllFromTrayAsync())
             });
         _trayMenu.Items.Add(new MenuFlyoutItem { Text = Loc.T("Quit TunHub"), Command = new RelayCommand(QuitNow) });
     }
@@ -149,6 +159,13 @@ public partial class App : Application
     private static List<TunnelConfig> SafeTunnels()
     {
         try { return Store.LoadAll(); } catch { return new List<TunnelConfig>(); }
+    }
+
+    private async Task StopAllFromTrayAsync()
+    {
+        try { await Daemon.StopAllAsync(); }
+        catch (Exception ex) { Log("tray-stopall", ex); }
+        _traySig = "";          // force the menu + icon to refresh on the next poll
     }
 
     private async Task ToggleTunnelAsync(TunnelConfig t, bool running)

@@ -134,7 +134,8 @@ public static class Loc
             ["System component not responding"] = "Системный компонент не отвечает",
             ["The service is running but not answering — reinstall it."] = "Служба запущена, но не отвечает — переустановите её.",
             ["Copy all"] = "Копировать всё",
-            ["Refresh"] = "Обновить"
+            ["Refresh"] = "Обновить",
+            ["Pause"] = "Пауза"
         }
     };
 }

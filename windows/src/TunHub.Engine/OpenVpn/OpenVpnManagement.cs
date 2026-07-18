@@ -78,8 +78,9 @@ public sealed class OpenVpnManagement : IDisposable
     /// into the password field as SCRV1.</summary>
     public void SendCredentials(string realm, string? username, string? password, string? otp)
     {
-        if (username is { Length: > 0 })
-            Send($"username \"{realm}\" {Escape(username)}");
+        // OpenVPN's management interface expects BOTH a username and a password reply for the
+        // realm; sending only one leaves it blocked forever ("could not read … from management").
+        Send($"username \"{realm}\" {Escape(username ?? "")}");
         var pw = password ?? "";
         if (otp is { Length: > 0 })
         {

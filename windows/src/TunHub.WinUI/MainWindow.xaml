@@ -121,7 +121,6 @@
           <SelectorBar Grid.Row="2" x:Name="DetailTabs">
             <SelectorBarItem x:Name="TabOverview" Text="Overview" IsSelected="True" />
             <SelectorBarItem x:Name="TabEditor" Text="Editor" />
-            <SelectorBarItem x:Name="TabStatus" Text="Status" />
           </SelectorBar>
 
           <Grid Grid.Row="3">
@@ -168,6 +167,23 @@
                   </StackPanel>
                 </Border>
 
+                <Border x:Name="SpeedCard" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" Padding="12"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                  <StackPanel Spacing="6">
+                    <Grid>
+                      <TextBlock Text="Speed" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                      <TextBlock x:Name="SpeedLegend" HorizontalAlignment="Right" FontSize="12"
+                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </Grid>
+                    <Canvas x:Name="SpeedCanvas" Height="120" HorizontalAlignment="Stretch"
+                            SizeChanged="SpeedCanvas_SizeChanged" Background="Transparent">
+                      <Polyline x:Name="DownLine" Stroke="#2F80ED" StrokeThickness="1.5" />
+                      <Polyline x:Name="UpLine" Stroke="#27AE60" StrokeThickness="1.5" />
+                    </Canvas>
+                  </StackPanel>
+                </Border>
+
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <Button x:Name="StartBtn" Content="Start" Style="{ThemeResource AccentButtonStyle}" />
                   <Button x:Name="StopBtn" Content="Stop" />
@@ -181,11 +197,6 @@
                           HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
               <StackPanel x:Name="EditorHost" Spacing="12" Padding="0,4,12,0"
                           HorizontalAlignment="Stretch" />
-            </ScrollViewer>
-
-            <!-- Status -->
-            <ScrollViewer x:Name="StatusPane" Visibility="Collapsed">
-              <StackPanel x:Name="StatusHost" Spacing="8" Padding="0,4,0,0" />
             </ScrollViewer>
           </Grid>
         </Grid>

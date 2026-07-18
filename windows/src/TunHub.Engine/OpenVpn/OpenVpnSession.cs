@@ -118,7 +118,10 @@ public sealed class OpenVpnSession : IDisposable
         {
             if (!_answeredRealms.Add(realm)) return;  // answer each realm once (auth-retry none)
         }
-        _log.Info($"ovpn:{Name}", $"credentials requested for '{realm}'");
+        _log.Info($"ovpn:{Name}", $"credentials requested for '{realm}' — sending " +
+            $"user={(string.IsNullOrEmpty(ovpn.Username) ? "<empty>" : "set")}, " +
+            $"pass={(string.IsNullOrEmpty(ovpn.Password) ? "<empty>" : "set")}, " +
+            $"otp={(string.IsNullOrEmpty(ovpn.Otp) ? "<none>" : "set")}");
         _mgmt!.SendCredentials(realm, ovpn.Username, ovpn.Password, ovpn.Otp);
     }
 

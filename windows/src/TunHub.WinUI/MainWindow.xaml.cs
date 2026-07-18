@@ -5,7 +5,9 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
 using TunHub.App.Services;
 using TunHub.Core;
 using TunHub.Engine.Platform;
@@ -29,6 +31,9 @@ public sealed partial class MainWindow : Window
     private bool _helperReachable;
     private readonly Dictionary<Guid, string> _externalIp = new();   // per-tunnel checked-at-start IP
     private readonly Dictionary<Guid, string> _startErrors = new();  // sticky start-time errors
+    private readonly Dictionary<Guid, List<(double down, double up)>> _speed = new();  // bytes/s history
+    private readonly Dictionary<Guid, (ulong rx, ulong tx, DateTimeOffset t)> _lastCounters = new();
+    private const int SpeedPoints = 90;
     private (bool Exists, bool Running) _svc;
     private DateTimeOffset _svcQueriedAt = DateTimeOffset.MinValue;
 
@@ -170,7 +175,7 @@ public sealed partial class MainWindow : Window
             BuildEditor(cfg);
             SelectTab(TabOverview);
         }
-        BuildStatus(cfg, s);
+        DrawSpeed(cfg, s);
     }
 
     // Routes: config routes for WG; server-pushed runtime routes for OpenVPN. One per line,
@@ -213,9 +218,8 @@ public sealed partial class MainWindow : Window
 
     private void UpdateTabVisibility()
     {
-        OverviewPane.Visibility = DetailTabs.SelectedItem == TabOverview ? Visibility.Visible : Visibility.Collapsed;
-        EditorPane.Visibility   = DetailTabs.SelectedItem == TabEditor   ? Visibility.Visible : Visibility.Collapsed;
-        StatusPane.Visibility   = DetailTabs.SelectedItem == TabStatus   ? Visibility.Visible : Visibility.Collapsed;
+        OverviewPane.Visibility = DetailTabs.SelectedItem == TabEditor ? Visibility.Collapsed : Visibility.Visible;
+        EditorPane.Visibility   = DetailTabs.SelectedItem == TabEditor ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // MARK: - Editor / Status hosts
@@ -412,35 +416,66 @@ public sealed partial class MainWindow : Window
         SplitList(s).Select(IpAddressRange.Parse).Where(r => r is not null).Select(r => r!.Value).ToList();
     private static string Fmt(IpAddressRange a) => $"{a.AddressString}/{a.Prefix}";
 
-    private void BuildStatus(TunnelConfig cfg, TunnelRuntimeState? s)
+    // Live speed chart (mirrors the macOS "Speed" graph) drawn from the per-tunnel rate history.
+    private void DrawSpeed(TunnelConfig cfg, TunnelRuntimeState? s)
     {
-        StatusHost.Children.Clear();
-        if (s is null || s.Peers.Count == 0)
+        var running = s?.Phase is TunnelPhase.Up or TunnelPhase.Degraded;
+        SpeedCard.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
+        if (!running) { DownLine.Points.Clear(); UpLine.Points.Clear(); SpeedLegend.Text = ""; return; }
+
+        var hist = _speed.TryGetValue(cfg.Id, out var h) ? h : new List<(double, double)>();
+        double w = SpeedCanvas.ActualWidth > 0 ? SpeedCanvas.ActualWidth : 400;
+        double ht = SpeedCanvas.ActualHeight > 0 ? SpeedCanvas.ActualHeight : 120;
+        double max = 1;
+        foreach (var (d, u) in hist) max = Math.Max(max, Math.Max(d, u));
+
+        DownLine.Points.Clear();
+        UpLine.Points.Clear();
+        if (hist.Count >= 2)
         {
-            StatusHost.Children.Add(new TextBlock
+            double dx = w / (hist.Count - 1);
+            for (int i = 0; i < hist.Count; i++)
             {
-                Text = Loc.T("tunnel not running"),
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
-            });
-            return;
+                double x = i * dx;
+                DownLine.Points.Add(new Windows.Foundation.Point(x, ht - hist[i].down / max * (ht - 4) - 2));
+                UpLine.Points.Add(new Windows.Foundation.Point(x, ht - hist[i].up / max * (ht - 4) - 2));
+            }
         }
-        foreach (var p in s.Peers)
+        var last = hist.Count > 0 ? hist[^1] : (0d, 0d);
+        SpeedLegend.Text = $"▼ {ByteFormat.Rate(last.Item1)}   ▲ {ByteFormat.Rate(last.Item2)}";
+    }
+
+    private void SpeedCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (Selected is { } item)
         {
-            var card = new StackPanel { Spacing = 2 };
-            if (p.Endpoint is { Length: > 0 })
-                card.Children.Add(new TextBlock { Text = $"{Loc.T("Endpoint")}: {p.Endpoint}" });
-            card.Children.Add(new TextBlock
+            _runtime.TryGetValue(item.Config.Id, out var s);
+            DrawSpeed(item.Config, s);
+        }
+    }
+
+    // Sample per-tunnel throughput from cumulative counters each poll.
+    private void SampleSpeed()
+    {
+        foreach (var st in _runtime.Values)
+        {
+            var now = DateTimeOffset.Now;
+            if (_lastCounters.TryGetValue(st.Id, out var prev))
             {
-                Text = $"rx {ByteFormat.Human(p.RxBytes)}   tx {ByteFormat.Human(p.TxBytes)}",
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
-            });
-            if (p.LastHandshake is { } hs)
-                card.Children.Add(new TextBlock
-                {
-                    Text = $"handshake: {hs.LocalDateTime:HH:mm:ss}",
-                    Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
-                });
-            StatusHost.Children.Add(card);
+                var dt = Math.Max(0.2, (now - prev.t).TotalSeconds);
+                double down = st.RxTotal >= prev.rx ? (st.RxTotal - prev.rx) / dt : 0;
+                double up = st.TxTotal >= prev.tx ? (st.TxTotal - prev.tx) / dt : 0;
+                var list = _speed.TryGetValue(st.Id, out var h) ? h : (_speed[st.Id] = new List<(double, double)>());
+                list.Add((down, up));
+                if (list.Count > SpeedPoints) list.RemoveRange(0, list.Count - SpeedPoints);
+            }
+            _lastCounters[st.Id] = (st.RxTotal, st.TxTotal, now);
+        }
+        // Drop history for tunnels no longer running.
+        foreach (var id in _lastCounters.Keys.Where(id => !_runtime.ContainsKey(id)).ToList())
+        {
+            _lastCounters.Remove(id);
+            _speed.Remove(id);
         }
     }
 
@@ -452,6 +487,7 @@ public sealed partial class MainWindow : Window
 
         var states = await _daemon.RuntimeStatesAsync();
         _runtime = states.GroupBy(s => s.Id).ToDictionary(g => g.Key, g => g.First());
+        SampleSpeed();
         foreach (var item in _items)
         {
             var phase = _runtime.TryGetValue(item.Config.Id, out var s) ? s.Phase : TunnelPhase.Stopped;
@@ -672,40 +708,67 @@ public sealed partial class MainWindow : Window
 
     private async Task ShowLogsAsync()
     {
-        var box = new TextBox
+        // Live, auto-scrolling, copyable log (like the macOS log window): a scrollable monospace
+        // TextBlock refreshed ~1 Hz, with Pause and Copy — no manual Refresh.
+        var tb = new TextBlock
         {
             Text = await BuildLogTextAsync(),
-            IsReadOnly = true, AcceptsReturn = true, IsSpellCheckEnabled = false,
-            TextWrapping = TextWrapping.NoWrap,
-            FontFamily = new FontFamily("Consolas"), FontSize = 12,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch
+            IsTextSelectionEnabled = true, TextWrapping = TextWrapping.NoWrap,
+            FontFamily = new FontFamily("Consolas"), FontSize = 12, Padding = new Thickness(12)
         };
-        ScrollViewer.SetVerticalScrollBarVisibility(box, ScrollBarVisibility.Auto);
-        ScrollViewer.SetHorizontalScrollBarVisibility(box, ScrollBarVisibility.Auto);
-
-        var copy = new Button { Content = Loc.T("Copy all") };
-        copy.Click += (_, _) =>
+        var sv = new ScrollViewer
         {
-            var dp = new DataPackage();
-            dp.SetText(box.Text);
-            Clipboard.SetContent(dp);
+            Content = tb, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollMode = ScrollMode.Enabled
         };
-        var refresh = new Button { Content = Loc.T("Refresh") };
-        refresh.Click += async (_, _) => box.Text = await BuildLogTextAsync();
+
+        var paused = false;
+        var pause = new ToggleButton { Content = Loc.T("Pause") };
+        pause.Checked += (_, _) => paused = true;
+        pause.Unchecked += (_, _) => paused = false;
+        var copy = new Button { Content = Loc.T("Copy all") };
+        copy.Click += (_, _) => { var dp = new DataPackage(); dp.SetText(tb.Text); Clipboard.SetContent(dp); };
 
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Padding = new Thickness(12, 8, 12, 4) };
+        bar.Children.Add(pause);
         bar.Children.Add(copy);
-        bar.Children.Add(refresh);
 
         var grid = new Grid();
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition());
         Grid.SetRow(bar, 0); grid.Children.Add(bar);
-        var host = new Border { Child = box, Padding = new Thickness(12, 0, 12, 12) };
-        Grid.SetRow(host, 1); grid.Children.Add(host);
+        Grid.SetRow(sv, 1); grid.Children.Add(sv);
 
-        OpenContentWindow(Loc.T("Logs"), grid, 860, 580, scroll: false);
+        var win = new Window { Title = Loc.T("Logs") };
+        win.Content = grid;
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(win);
+            var id = Win32Interop.GetWindowIdFromWindow(hwnd);
+            AppWindow.GetFromWindowId(id).Resize(new Windows.Graphics.SizeInt32(1000, 680));
+        }
+        catch { }
+
+        var timer = win.DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(1);
+        timer.Tick += async (_, _) =>
+        {
+            if (paused) return;
+            var text = await BuildLogTextAsync();
+            if (text == tb.Text) return;
+            var atBottom = sv.VerticalOffset >= sv.ScrollableHeight - 8;
+            tb.Text = text;
+            if (atBottom)
+            {
+                sv.UpdateLayout();
+                sv.ChangeView(null, sv.ScrollableHeight, null, true);
+            }
+        };
+        win.Closed += (_, _) => timer.Stop();
+        win.Activate();
+        sv.UpdateLayout();
+        sv.ChangeView(null, sv.ScrollableHeight, null, true);   // start at the newest lines
+        timer.Start();
     }
 
     /// <summary>Combined, copyable log: this app's own client log + the helper's recent log.</summary>

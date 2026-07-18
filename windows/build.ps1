@@ -106,7 +106,7 @@ Copy-Item "$Cores\amneziawg-go.exe","$Cores\wireguard-go.exe","$Cores\wintun.dll
 # Single-file publish doesn't lay out the Assets folder — copy the icon so the MSI (ARP/shortcut)
 # and the tray's ms-appx:///Assets/TunHub.ico both resolve it.
 New-Item -ItemType Directory -Force -Path "$Dist\Assets" | Out-Null
-Copy-Item "src\TunHub.WinUI\Assets\TunHub.ico" "$Dist\Assets\" -Force
+Copy-Item "src\TunHub.WinUI\Assets\*.ico" "$Dist\Assets\" -Force
 if (Test-Path "$Cores\openvpn\openvpn.exe") {
     Copy-Item "$Cores\openvpn\*" "$Dist\" -Force
     Write-Host "    bundled OpenVPN core"
