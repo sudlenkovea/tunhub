@@ -49,26 +49,21 @@ public sealed class WindowsPlatform : ITunnelPlatform
 
     public string? WaitForInterface(CoreLaunch launch, Process process, TimeSpan timeout)
     {
-        var name = launch.KnownInterfaceName;
-        if (name is null) return null;
-        // Wait for the core's UAPI pipe to appear.
-        var deadline = DateTime.UtcNow + timeout;
-        var pipe = UapiPipeName(name);
-        while (DateTime.UtcNow < deadline)
-        {
-            if (File.Exists($@"\\.\pipe\{pipe}")) return name;
-            if (process.HasExited) return null;
-            Thread.Sleep(100);
-        }
-        return name; // best effort; connection attempt will surface a clear error if wrong
+        // The adapter name is passed to the core up-front and used verbatim; File.Exists on a
+        // named pipe is unreliable, so don't poll it here — just confirm the core didn't die
+        // immediately. ConnectUapi then waits for the actual UAPI pipe to appear.
+        Thread.Sleep(300);
+        return process.HasExited ? null : launch.KnownInterfaceName;
     }
 
-    private static string UapiPipeName(string iface) =>
-        $@"ProtectedPrefix\Administrators\WireGuard\{iface}";
+    // amneziawg-go exposes UAPI on \\.\pipe\ProtectedPrefix\Administrators\AmneziaWG\<iface>,
+    // plain wireguard-go on …\WireGuard\<iface> — the prefix depends on the core.
+    private static string UapiPipeName(string iface, TunnelKind kind) =>
+        $@"ProtectedPrefix\Administrators\{(kind == TunnelKind.AmneziaWg ? "AmneziaWG" : "WireGuard")}\{iface}";
 
     public Stream ConnectUapi(string interfaceName, TunnelKind kind, TimeSpan timeout)
     {
-        var client = new NamedPipeClientStream(".", UapiPipeName(interfaceName),
+        var client = new NamedPipeClientStream(".", UapiPipeName(interfaceName, kind),
             PipeDirection.InOut, PipeOptions.Asynchronous);
         client.Connect((int)timeout.TotalMilliseconds);
         return client;
