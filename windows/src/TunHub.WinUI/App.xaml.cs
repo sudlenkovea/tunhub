@@ -121,10 +121,12 @@ public partial class App : Application
         _trayMenu.Items.Add(new MenuFlyoutSeparator());
 
         var tunnels = SafeTunnels();
+        var anyRunning = false;
         foreach (var t in tunnels)
         {
             var phase = States.TryGetValue(t.Id, out var p) ? p : TunnelPhase.Stopped;
             var running = phase is TunnelPhase.Up or TunnelPhase.Degraded or TunnelPhase.Starting;
+            anyRunning |= running;
             var cfg = t; var isRunning = running;
             _trayMenu.Items.Add(new MenuFlyoutItem
             {
@@ -134,11 +136,13 @@ public partial class App : Application
         }
         if (tunnels.Count > 0) _trayMenu.Items.Add(new MenuFlyoutSeparator());
 
-        _trayMenu.Items.Add(new MenuFlyoutItem
-        {
-            Text = Loc.T("Stop all"),
-            Command = new RelayCommand(() => { try { _ = Daemon.StopAllAsync(); } catch (Exception ex) { Log("tray-stopall", ex); } })
-        });
+        // "Stop all" only when something is actually running (like the main window).
+        if (anyRunning)
+            _trayMenu.Items.Add(new MenuFlyoutItem
+            {
+                Text = Loc.T("Stop all"),
+                Command = new RelayCommand(() => { try { _ = Daemon.StopAllAsync(); } catch (Exception ex) { Log("tray-stopall", ex); } })
+            });
         _trayMenu.Items.Add(new MenuFlyoutItem { Text = Loc.T("Quit TunHub"), Command = new RelayCommand(QuitNow) });
     }
 
