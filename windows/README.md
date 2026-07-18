@@ -40,11 +40,12 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 The script builds the Go cores for windows/amd64, fetches `wintun.dll`, downloads and
-extracts the OpenVPN core, stamps the build, publishes the WinUI app + helper (self-contained)
-into `dist\TunHub`, bundles third-party license texts into `dist\TunHub\licenses\`, and builds
-an **MSI** (`dist\TunHub-0.8.1-win-x64.msi`) via WiX that installs the app, registers the
-`TunHubHelper` service and adds a Start-menu shortcut. Set `SKIP_MSI=1` for just the portable
-folder.
+extracts the OpenVPN core (only `openvpn.exe` + its DLLs), stamps the build, publishes the
+WinUI app + helper **single-file, self-contained** (all managed assemblies collapse into
+`TunHub.exe` / `tunhub-helper.exe`; only WinUI's native runtime pieces + the cores stay loose),
+bundles third-party license texts into `dist\TunHub\licenses\`, and builds an **MSI**
+(`dist\TunHub-0.8.1-win-x64.msi`) via WiX that installs the app, registers the `TunHubHelper`
+service and adds a Start-menu shortcut. Set `SKIP_MSI=1` for just the portable folder.
 
 OpenVPN core: the official community MSI (`openvpn-latest-stable-amd64.msi`) is downloaded and
 administratively extracted (`msiexec /a`, no install) to stage `openvpn.exe` + its DLLs. Override
