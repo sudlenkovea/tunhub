@@ -14,9 +14,34 @@ final class RouteManager {
 
     struct Gateway { let gateway: String?; let iface: String? }
 
-    /// Physical default gateway (before our /1 routes are installed).
+    /// Physical uplink gateway — the REAL hardware router (e.g. en1 → 192.168.1.1).
+    ///
+    /// Taken from SCDynamicStore's primary service, NOT `route get default`. When another VPN
+    /// (WireGuard/Tailscale/WARP/corporate) is active it installs a lower-metric default route
+    /// via its own virtual gateway (often CGNAT 100.64.0.0/10, e.g. 100.90.192.1). `route get`
+    /// would then hand us that VPN's gateway; pinning a full-tunnel endpoint through it
+    /// black-holes the handshake whenever that VPN is split-tunnel or has since disconnected.
+    /// The primary-service Router is the hardware uplink even while such VPNs are up, which is
+    /// exactly the path a VPN's own outer/transport packets must egress.
     func physicalDefaultGateway(v6: Bool = false) -> Gateway {
-        currentRoute(to: "default", v6: v6)
+        if let g = scPrimaryRouter(v6: v6) { return g }
+        return currentRoute(to: "default", v6: v6)   // fallback if SCDynamicStore is unavailable
+    }
+
+    /// Primary hardware router from SCDynamicStore. Returns nil if the primary interface is
+    /// itself a tunnel (no clean physical path) or the store can't be read.
+    private func scPrimaryRouter(v6: Bool) -> Gateway? {
+        guard let store = SCDynamicStoreCreate(nil, "tunhubd.phys" as CFString, nil, nil) else { return nil }
+        let key = (v6 ? "State:/Network/Global/IPv6" : "State:/Network/Global/IPv4") as CFString
+        guard let d = SCDynamicStoreCopyValue(store, key) as? [String: Any] else { return nil }
+        let iface = d["PrimaryInterface"] as? String
+        let router = d["Router"] as? String
+        if let i = iface,
+           i.hasPrefix("utun") || i.hasPrefix("ipsec") || i.hasPrefix("ppp") || i.hasPrefix("tun") {
+            return nil   // primary is another VPN — no physical gateway to hand back
+        }
+        guard router != nil || iface != nil else { return nil }
+        return Gateway(gateway: router, iface: iface)
     }
 
     /// How the system reaches `dst` RIGHT NOW (default or a specific host/ip).
@@ -38,15 +63,18 @@ final class RouteManager {
         var deletes: [[String]] = []
         defer { setJournal(spec.id, deletes) }
 
-        // 1. Pin endpoints via the CURRENT path to them (before the /1 routes!).
-        // Ask the system how it actually reaches the endpoint (physical interface OR another
-        // active VPN) and lock in exactly that path — otherwise the tunnel's outer packets
-        // go into a black hole.
+        // 1. Pin endpoints via the PHYSICAL uplink (before the /1 routes!).
+        // The tunnel's outer packets must leave through the real hardware NIC. We deliberately
+        // do NOT pin via `route get endpoint`, because if another VPN currently owns the default
+        // route its virtual gateway (often CGNAT 100.64.0.0/10) would be picked and the handshake
+        // black-holes. Fall back to the endpoint's current path only if we can't find the
+        // physical gateway (e.g. the primary service is itself a VPN).
         for (_, ep) in resolvedEndpoints {
             guard let (host, _) = EndpointUtil.split(ep) else { continue }
             let v6 = host.contains(":")
             let fam = v6 ? "-inet6" : "-inet"
-            let path = currentRoute(to: host, v6: v6)
+            var path = physicalDefaultGateway(v6: v6)
+            if path.gateway == nil && path.iface == nil { path = currentRoute(to: host, v6: v6) }
             var addArgs = ["-q", "-n", "add", fam, "-host", host]
             if let g = path.gateway { addArgs += [g] }              // via gateway (physical or VPN gw)
             else if let i = path.iface { addArgs += ["-interface", i] }  // point-to-point interface

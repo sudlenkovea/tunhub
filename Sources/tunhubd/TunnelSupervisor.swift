@@ -525,8 +525,49 @@ final class TunnelSupervisor {
             }
             try? FileManager.default.removeItem(atPath: Paths.ownership)
         }
+        // Registry-independent sweep: catches orphans left by SIGKILL, an app update, or a
+        // lost/wiped ownership file — the exact case that leaves a stale default route and
+        // black-holes the next tunnel's handshake.
+        reapOrphanCores()
         DNSManager.shared.crashRecovery()
         FirewallManager.shared.crashRecovery()
+    }
+
+    /// Scavenge orphaned core processes from a previous daemon run, matched by their FULL
+    /// executable path being one of OUR bundled cores. We never touch another app's
+    /// WireGuard/AmneziaWG/OpenVPN because we require the path to live inside our bundle.
+    /// This runs once at startup, before we spawn anything, so every match is an orphan.
+    /// Killing a core also destroys its utun interface, which auto-removes its routes —
+    /// including any leftover default route that would otherwise hijack endpoint pinning.
+    private func reapOrphanCores() {
+        let ourDir = Self.executableDir().path
+        let coreNames: Set<String> = ["amneziawg-go", "wireguard-go", "openvpn"]
+        let me = getpid()
+        // `comm` on macOS is the full executable path.
+        let out = run("/bin/ps", ["-Axo", "pid=,comm="]).stdout
+        var reaped = 0
+        for raw in out.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let sp = line.firstIndex(of: " "),
+                  let pid = Int32(line[..<sp]) else { continue }
+            let path = String(line[line.index(after: sp)...]).trimmingCharacters(in: .whitespaces)
+            let base = (path as NSString).lastPathComponent
+            guard pid != me, coreNames.contains(base), path.hasPrefix(ourDir + "/") else { continue }
+            flog.warn("recover", "reaping orphaned core pid=\(pid) (\(base)) from a previous run")
+            kill(pid, SIGTERM)
+            var waited = 0
+            while kill(pid, 0) == 0 && waited < 20 { usleep(100_000); waited += 1 }  // up to 2s
+            if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+            reaped += 1
+        }
+        if reaped > 0 { flog.info("recover", "reaped \(reaped) orphaned core process(es)") }
+        // Remove stale UAPI sockets left by dead cores (no live listener at startup).
+        for dir in ["/var/run/amneziawg", "/var/run/wireguard"] {
+            guard let entries = try? FileManager.default.contentsOfDirectory(atPath: dir) else { continue }
+            for e in entries where e.hasSuffix(".sock") {
+                try? FileManager.default.removeItem(atPath: dir + "/" + e)
+            }
+        }
     }
 
     // MARK: helpers
