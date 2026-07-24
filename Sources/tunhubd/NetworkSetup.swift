@@ -28,20 +28,54 @@ final class RouteManager {
         return currentRoute(to: "default", v6: v6)   // fallback if SCDynamicStore is unavailable
     }
 
-    /// Primary hardware router from SCDynamicStore. Returns nil if the primary interface is
-    /// itself a tunnel (no clean physical path) or the store can't be read.
+    /// Primary hardware router, robust against VPNs that hijack the *global* default route.
+    ///
+    /// We do NOT trust `State:/Network/Global/IPv4 → Router`: a VPN like Cloudflare WARP sets
+    /// that to its own CGNAT gateway (e.g. 100.90.192.1) while leaving PrimaryInterface as the
+    /// physical NIC. Instead we read the PER-SERVICE router of the physical service
+    /// (`State:/Network/Service/<id>/IPv4 → Router`) and, as a bullet-proof fallback, the
+    /// interface's DHCP-assigned router via `ipconfig`. Both reflect the real uplink gateway
+    /// (192.168.1.1) regardless of any VPN route manipulation.
     private func scPrimaryRouter(v6: Bool) -> Gateway? {
         guard let store = SCDynamicStoreCreate(nil, "tunhubd.phys" as CFString, nil, nil) else { return nil }
-        let key = (v6 ? "State:/Network/Global/IPv6" : "State:/Network/Global/IPv4") as CFString
-        guard let d = SCDynamicStoreCopyValue(store, key) as? [String: Any] else { return nil }
-        let iface = d["PrimaryInterface"] as? String
-        let router = d["Router"] as? String
-        if let i = iface,
-           i.hasPrefix("utun") || i.hasPrefix("ipsec") || i.hasPrefix("ppp") || i.hasPrefix("tun") {
-            return nil   // primary is another VPN — no physical gateway to hand back
+        let fam = v6 ? "IPv6" : "IPv4"
+        let global = SCDynamicStoreCopyValue(store, "State:/Network/Global/\(fam)" as CFString) as? [String: Any]
+        let primaryIface = global?["PrimaryInterface"] as? String
+
+        // Try the primary service first, then the whole service order — first HARDWARE one wins.
+        var services: [String] = []
+        if let s = global?["PrimaryService"] as? String { services.append(s) }
+        if let setup = SCDynamicStoreCopyValue(store, "Setup:/Network/Global/\(fam)" as CFString) as? [String: Any],
+           let order = setup["ServiceOrder"] as? [String] {
+            services += order
         }
-        guard router != nil || iface != nil else { return nil }
-        return Gateway(gateway: router, iface: iface)
+        for svc in services {
+            guard let s = SCDynamicStoreCopyValue(store, "State:/Network/Service/\(svc)/\(fam)" as CFString) as? [String: Any] else { continue }
+            let iface = (s["ConfirmedInterfaceName"] as? String) ?? (s["InterfaceName"] as? String)
+            guard let i = iface, isHardwareIface(i) else { continue }
+            if let router = s["Router"] as? String, IPAddressRange.pton(router) != nil {
+                return Gateway(gateway: router, iface: i)
+            }
+            if let r = dhcpRouter(iface: i, v6: v6) { return Gateway(gateway: r, iface: i) }
+        }
+        // Last resort: DHCP router of the global primary interface (if it's hardware).
+        if let i = primaryIface, isHardwareIface(i), let r = dhcpRouter(iface: i, v6: v6) {
+            return Gateway(gateway: r, iface: i)
+        }
+        return nil
+    }
+
+    private func isHardwareIface(_ i: String) -> Bool {
+        !(i.hasPrefix("utun") || i.hasPrefix("ipsec") || i.hasPrefix("ppp")
+          || i.hasPrefix("tun") || i.hasPrefix("gif") || i.hasPrefix("stf") || i.hasPrefix("tap"))
+    }
+
+    /// DHCP-assigned router for a hardware interface — immune to VPN route changes (IPv4 only).
+    private func dhcpRouter(iface: String, v6: Bool) -> String? {
+        guard !v6 else { return nil }
+        let out = run("/usr/sbin/ipconfig", ["getoption", iface, "router"]).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return IPAddressRange.pton(out) != nil ? out : nil
     }
 
     /// How the system reaches `dst` RIGHT NOW (default or a specific host/ip).
