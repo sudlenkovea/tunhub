@@ -7,7 +7,6 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Shapes;
 using TunHub.App.Services;
 using TunHub.Core;
 using TunHub.Engine.Platform;
@@ -104,7 +103,6 @@ public sealed partial class MainWindow : Window
         EmptyHint.Text = Loc.T("Select a tunnel or import configs");
         TabOverview.Text = Loc.T("Overview");
         TabEditor.Text = Loc.T("Editor");
-        TabStatus.Text = Loc.T("Status");
         HelperBar.Title = Loc.T("System component not running");
         HelperBar.Message = Loc.T("TunHub needs a background service to manage tunnels.");
         InstallHelperBtn.Content = Loc.T("Install system component");
@@ -423,7 +421,7 @@ public sealed partial class MainWindow : Window
         SpeedCard.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
         if (!running) { DownLine.Points.Clear(); UpLine.Points.Clear(); SpeedLegend.Text = ""; return; }
 
-        var hist = _speed.TryGetValue(cfg.Id, out var h) ? h : new List<(double, double)>();
+        var hist = _speed.TryGetValue(cfg.Id, out var h) ? h : new List<(double down, double up)>();
         double w = SpeedCanvas.ActualWidth > 0 ? SpeedCanvas.ActualWidth : 400;
         double ht = SpeedCanvas.ActualHeight > 0 ? SpeedCanvas.ActualHeight : 120;
         double max = 1;
@@ -436,13 +434,13 @@ public sealed partial class MainWindow : Window
             double dx = w / (hist.Count - 1);
             for (int i = 0; i < hist.Count; i++)
             {
-                double x = i * dx;
-                DownLine.Points.Add(new Windows.Foundation.Point(x, ht - hist[i].down / max * (ht - 4) - 2));
-                UpLine.Points.Add(new Windows.Foundation.Point(x, ht - hist[i].up / max * (ht - 4) - 2));
+                float x = (float)(i * dx);
+                DownLine.Points.Add(new Windows.Foundation.Point(x, (float)(ht - hist[i].down / max * (ht - 4) - 2)));
+                UpLine.Points.Add(new Windows.Foundation.Point(x, (float)(ht - hist[i].up / max * (ht - 4) - 2)));
             }
         }
-        var last = hist.Count > 0 ? hist[^1] : (0d, 0d);
-        SpeedLegend.Text = $"▼ {ByteFormat.Rate(last.Item1)}   ▲ {ByteFormat.Rate(last.Item2)}";
+        (double down, double up) last = hist.Count > 0 ? hist[^1] : (0d, 0d);
+        SpeedLegend.Text = $"▼ {ByteFormat.Rate(last.down)}   ▲ {ByteFormat.Rate(last.up)}";
     }
 
     private void SpeedCanvas_SizeChanged(object sender, SizeChangedEventArgs e)

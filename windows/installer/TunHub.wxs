@@ -44,11 +44,17 @@
       <Directory Id="AppShortcutFolder" Name="TunHub" />
     </StandardDirectory>
 
-    <!-- Harvest the publish output (everything except the helper exe, which is a service). -->
+    <!-- Harvest the publish output. The two exes are declared explicitly (below) so they're
+         guaranteed to ship — the helper as a service, TunHub.exe as the app entry point. -->
     <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
       <Files Include="$(var.DistDir)\**">
         <Exclude Files="$(var.DistDir)\tunhub-helper.exe" />
+        <Exclude Files="$(var.DistDir)\TunHub.exe" />
       </Files>
+
+      <Component Id="MainExe" Guid="B2C4D6E8-0A1B-2C3D-4E5F-60718293A4B5">
+        <File Id="TunHubExe" Source="$(var.DistDir)\TunHub.exe" KeyPath="yes" />
+      </Component>
 
       <Component Id="HelperService" Guid="8A1D2C33-5F44-4B66-8E77-1A2B3C4D5E6F">
         <File Id="HelperExe" Source="$(var.DistDir)\tunhub-helper.exe" KeyPath="yes" />
