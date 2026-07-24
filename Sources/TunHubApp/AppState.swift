@@ -57,6 +57,7 @@ final class AppState: ObservableObject {
     @Published var history: [UUID: [StatSample]] = [:]      // ~2h at a 2s poll interval
     @Published var externalIPs: [UUID: String] = [:]         // short status shown inline
     @Published var externalIPDetails: [UUID: String] = [:]   // full explanation (hover help)
+    @Published var systemDNS: [String] = []                  // cached; NEVER computed in a view body
     @Published var daemonReachable = false
     @Published var daemonInstalled = DaemonManager.isEnabled
     @Published var lastError: String?
@@ -206,6 +207,12 @@ final class AppState: ObservableObject {
 
     // MARK: Polling
 
+    /// Read the system resolver (spawns `scutil`) off the main thread and cache it. Called at
+    /// startup and on tunnel-up only — NEVER from a view body.
+    func refreshSystemDNS() async {
+        systemDNS = await Task.detached { TunnelProbe.systemPrimaryDNS() }.value
+    }
+
     func startPolling() {
         pollTask?.cancel()
         pollTask = Task { [weak self] in
@@ -222,6 +229,10 @@ final class AppState: ObservableObject {
         let alive = await daemon.ping()
         daemonReachable = alive
         daemonInstalled = DaemonManager.isEnabled || alive
+        // System DNS is read via a `scutil` subprocess — compute it ONCE at startup (and again
+        // only when a tunnel comes up, below), never in a view body. Doing it on every re-render
+        // spawned scutil continuously → 100% CPU and a runaway memory footprint.
+        if systemDNS.isEmpty { await refreshSystemDNS() }
         // Version is checked only on launch (and on demand) — do NOT touch it here so the modal doesn't flicker.
         var newRuntime: [UUID: TunnelRuntimeState] = [:]
         let now = Date()
@@ -257,6 +268,7 @@ final class AppState: ObservableObject {
             applog.info("phase", "“\(s.name)” \(from) → \(s.phase.rawValue)\(extra)")
             if s.phase == .up, lastPhases[id] != .up, let cfg = tunnels.first(where: { $0.id == id }) {
                 fetchExternalIP(cfg)   // via the utun interface, works even without a default route
+                await refreshSystemDNS()   // the resolver may change when a tunnel comes up
             }
             // A failed connection → surface a retry/cancel prompt (once per failure episode).
             if s.phase == .failed, !reportedFailures.contains(id),

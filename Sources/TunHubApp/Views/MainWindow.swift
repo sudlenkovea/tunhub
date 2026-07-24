@@ -301,7 +301,7 @@ struct OverviewView: View {
                         }
                         GridRow {
                             Text("System DNS").foregroundStyle(.secondary)
-                            Text(TunnelProbe.systemPrimaryDNS().joined(separator: ", "))
+                            Text(state.systemDNS.joined(separator: ", "))
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
