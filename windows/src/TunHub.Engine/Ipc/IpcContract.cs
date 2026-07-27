@@ -12,6 +12,7 @@ public static class IpcMethod
     public const string SetKillSwitch = "setKillSwitch";
     public const string Version = "version";
     public const string RecentLog = "recentLog";
+    public const string SetLogMode = "setLogMode";
 }
 
 /// <summary>Envelope: one JSON line per request/response over the socket.</summary>
@@ -37,6 +38,8 @@ public sealed class IpcResponse
 public sealed class SetKillSwitchPayload { public bool Enabled { get; set; } }
 public sealed class StopTunnelPayload { public Guid Id { get; set; } }
 public sealed class RecentLogPayload { public int MaxLines { get; set; } = 500; }
+/// <summary>New capture mode; the helper applies it on its next start (see LogSettings).</summary>
+public sealed class SetLogModePayload { public string Mode { get; set; } = "Normal"; }
 
 public sealed class LogLine
 {

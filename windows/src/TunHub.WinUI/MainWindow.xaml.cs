@@ -18,6 +18,10 @@ namespace TunHub.WinUI;
 
 public sealed partial class MainWindow : Window
 {
+    /// Upper bound on what the log window pulls and renders. The files themselves are capped
+    /// at 5 MB; handing a text block more than this only costs layout time.
+    private const int LogWindowMaxLines = 1500;
+
     private readonly AppStore _store = new();
     private readonly DaemonClient _daemon = new();
     private readonly ObservableCollection<TunnelItem> _items = new();
@@ -748,7 +752,9 @@ public sealed partial class MainWindow : Window
         catch { }
 
         var timer = win.DispatcherQueue.CreateTimer();
-        timer.Interval = TimeSpan.FromSeconds(1);
+        // 1 Hz felt "live" but doubled the cost of every tick (IPC fetch + full re-layout of
+        // the text block); 2 s is still live and halves the work.
+        timer.Interval = TimeSpan.FromSeconds(2);
         timer.Tick += async (_, _) =>
         {
             if (paused) return;
@@ -776,23 +782,52 @@ public sealed partial class MainWindow : Window
         try
         {
             var appLog = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TunHub", "app.log");
-            if (File.Exists(appLog))
+            var tail = TailLines(appLog, 200);
+            if (tail.Length > 0)
             {
                 sb.AppendLine("=== App (client) log ===");
-                sb.AppendLine(string.Join("\n", File.ReadLines(appLog).Reverse().Take(200).Reverse()));
+                sb.AppendLine(string.Join("\n", tail));
                 sb.AppendLine();
             }
         }
         catch { }
 
         sb.AppendLine("=== Helper (service) log ===");
-        var lines = await _daemon.RecentLogAsync(1000);
+        var lines = await _daemon.RecentLogAsync(LogWindowMaxLines);
         if (lines.Count == 0)
             sb.AppendLine(_helperReachable ? "(empty)" : "(helper not reachable)");
         else
             foreach (var l in lines)
                 sb.AppendLine($"{l.Time.LocalDateTime:yyyy-MM-dd HH:mm:ss} [{l.Level,-5}] {l.Category}: {l.Message}");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Last <paramref name="maxLines"/> lines of a file, reading only the tail bytes.
+    /// <c>File.ReadLines(..).Reverse()</c> pulls the WHOLE file into memory, and the log
+    /// window called this once a second.
+    /// </summary>
+    private static string[] TailLines(string path, int maxLines)
+    {
+        try
+        {
+            if (!File.Exists(path)) return Array.Empty<string>();
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            // ~220 bytes/line is a generous estimate; never read more than 1 MB.
+            var want = (int)Math.Min(fs.Length, Math.Min(1_000_000, Math.Max(64 * 1024, maxLines * 220)));
+            fs.Seek(fs.Length - want, SeekOrigin.Begin);
+            var buf = new byte[want];
+            _ = fs.Read(buf, 0, want);
+            var text = System.Text.Encoding.UTF8.GetString(buf);
+            if (want < fs.Length)
+            {
+                var nl = text.IndexOf('\n');          // drop the partial first line
+                if (nl >= 0) text = text[(nl + 1)..];
+            }
+            var all = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            return all.Length <= maxLines ? all : all[^maxLines..];
+        }
+        catch { return Array.Empty<string>(); }
     }
 
     private void OpenContentWindow(string title, FrameworkElement content, int width, int height, bool scroll = true)
@@ -970,10 +1005,25 @@ public sealed partial class MainWindow : Window
         var launch = new ToggleSwitch { Header = Loc.T("Launch TunHub at login"), IsOn = settings.LaunchAtLogin };
         var kill = new ToggleSwitch { Header = Loc.T("Kill switch (global)"), IsOn = settings.KillSwitchGlobal };
 
+        // Log capture. Verbose multiplies log volume and CPU, so it is opt-in and only takes
+        // effect after a restart — that way a log never mixes two verbosity levels.
+        var currentMode = LogSettings.Read();
+        var logMode = new ComboBox { Header = Loc.T("Log capture") };
+        var modes = new[] { LogCaptureMode.Normal, LogCaptureMode.Verbose };
+        foreach (var m in modes) logMode.Items.Add(m.Label());
+        logMode.SelectedIndex = Array.IndexOf(modes, currentMode);
+        var logHint = new TextBlock
+        {
+            Text = Loc.T("Verbose records every command and the tunnel core's debug output. Use it for troubleshooting only — it produces a lot of data and uses noticeably more CPU. Logs are kept in a single file, trimmed to the last 5 MB."),
+            TextWrapping = TextWrapping.Wrap, Opacity = 0.7, FontSize = 12
+        };
+
         var panel = new StackPanel { Spacing = 12 };
         panel.Children.Add(lang);
         panel.Children.Add(launch);
         panel.Children.Add(kill);
+        panel.Children.Add(logMode);
+        panel.Children.Add(logHint);
         lang.SelectionChanged += (_, _) => { if (lang.SelectedIndex >= 0) settings.Language = codes[lang.SelectedIndex]; };
 
         var dialog = new ContentDialog
@@ -988,6 +1038,57 @@ public sealed partial class MainWindow : Window
         settings.Save();
         LoginItem.Apply(settings.LaunchAtLogin);
         await SafeAsync(() => _daemon.SetKillSwitchAsync(settings.KillSwitchGlobal));
+
+        var chosen = modes[Math.Max(0, logMode.SelectedIndex)];
+        if (chosen != currentMode) await ApplyLogModeAsync(chosen);
+    }
+
+    /// <summary>
+    /// Persist the capture mode on both sides and restart so it actually takes effect.
+    /// The helper is a service, so it is restarted separately from the app.
+    /// </summary>
+    private async Task ApplyLogModeAsync(LogCaptureMode mode)
+    {
+        await SafeAsync(() => _daemon.SetLogModeAsync(mode));
+        LogSettings.Write(mode);   // app-side copy (helper writes its own under ProgramData)
+
+        var dialog = new ContentDialog
+        {
+            Title = Loc.T("Restart required"),
+            Content = new TextBlock
+            {
+                Text = Loc.T("The new log capture mode starts collecting after a restart. Restart TunHub now?"),
+                TextWrapping = TextWrapping.Wrap
+            },
+            PrimaryButtonText = Loc.T("Restart now"),
+            CloseButtonText = Loc.T("Later"),
+            XamlRoot = Root.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        // Restart the helper service (best effort — needs elevation) so it re-reads the mode.
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+                "-NoProfile -WindowStyle Hidden -Command \"Restart-Service -Name TunHubHelper -Force\"")
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+            };
+            System.Diagnostics.Process.Start(psi)?.WaitForExit(15000);
+        }
+        catch { /* the mode still applies the next time the service starts */ }
+
+        // Relaunch the app.
+        try
+        {
+            var exe = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+            if (!string.IsNullOrEmpty(exe))
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true });
+        }
+        catch { }
+        Environment.Exit(0);
     }
 
     private async Task MessageAsync(string title, string body, bool scroll = false)

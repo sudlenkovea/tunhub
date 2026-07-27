@@ -41,7 +41,10 @@ public sealed class WindowsPlatform : ITunnelPlatform
             KnownInterfaceName = ifaceName,
             Environment =
             {
-                ["LOG_LEVEL"] = "verbose",
+                // In Normal capture the core only reports errors: its verbose stream is
+                // per-packet chatty and every line costs a pipe read plus a log write for
+                // the tunnel's whole lifetime.
+                ["LOG_LEVEL"] = LogSettings.Read().CoreLogLevel(),
                 ["TUNHUB_OWNER"] = id.ToString()
             }
         };

@@ -27,6 +27,10 @@ public sealed class DaemonClient
     public Task SetKillSwitchAsync(bool enabled) =>
         _ipc.CallAsync(IpcMethod.SetKillSwitch, new SetKillSwitchPayload { Enabled = enabled });
 
+    /// <summary>Persist the capture mode on the helper side (it applies it on its next start).</summary>
+    public Task SetLogModeAsync(LogCaptureMode mode) =>
+        _ipc.CallAsync(IpcMethod.SetLogMode, new SetLogModePayload { Mode = mode.ToString() });
+
     public async Task<List<TunnelRuntimeState>> RuntimeStatesAsync()
     {
         try

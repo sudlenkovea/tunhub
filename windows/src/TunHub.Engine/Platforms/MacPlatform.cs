@@ -41,7 +41,7 @@ public sealed class MacPlatform : ITunnelPlatform
             {
                 ["WG_PROCESS_FOREGROUND"] = "1",
                 ["WG_TUN_NAME_FILE"] = nameFile,
-                ["LOG_LEVEL"] = "verbose",
+                ["LOG_LEVEL"] = LogSettings.Read().CoreLogLevel(),
                 ["TUNHUB_OWNER"] = id.ToString()
             }
         };

@@ -96,6 +96,14 @@ public static class Loc
             ["Errors"] = "Ошибки",
             ["Close"] = "Закрыть",
             ["Cancel"] = "Отмена",
+            ["Log capture"] = "Сбор логов",
+            ["Verbose records every command and the tunnel core's debug output. Use it for troubleshooting only — it produces a lot of data and uses noticeably more CPU. Logs are kept in a single file, trimmed to the last 5 MB."]
+                = "Подробный режим записывает каждую команду и отладочный вывод ядра туннеля. Используйте только для диагностики — данных получается много и заметно растёт нагрузка на процессор. Логи хранятся в одном файле, обрезаемом до последних 5 МБ.",
+            ["Restart required"] = "Требуется перезапуск",
+            ["The new log capture mode starts collecting after a restart. Restart TunHub now?"]
+                = "Новый режим сбора логов начнёт работать после перезапуска. Перезапустить TunHub сейчас?",
+            ["Restart now"] = "Перезапустить сейчас",
+            ["Later"] = "Позже",
             ["Open window"] = "Открыть окно",
             ["Quit TunHub"] = "Выход из TunHub",
             ["Disconnect all tunnels before quitting?"] = "Отключить все туннели перед выходом?",

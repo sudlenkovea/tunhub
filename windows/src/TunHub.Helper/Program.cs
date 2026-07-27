@@ -21,7 +21,9 @@ internal sealed class HelperService : BackgroundService
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         PlatformPaths.EnsureDirectories();
-        var log = new FileLog(PlatformPaths.LogFile);
+        // Capture mode is read once here; a live switch is deliberately unsupported so the
+        // file never mixes two verbosity levels (see LogSettings).
+        var log = new FileLog(PlatformPaths.LogFile) { MinLevel = LogSettings.Read().MinLevel() };
         var platform = PlatformFactory.Create(log);
         _engine = new EngineHost(platform, log);
         _engine.Run();

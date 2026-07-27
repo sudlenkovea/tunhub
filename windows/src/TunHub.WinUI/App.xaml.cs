@@ -73,15 +73,39 @@ public partial class App : Application
         catch { /* nothing more we can do */ }
     }
 
-    /// <summary>Append a diagnostic line to %LOCALAPPDATA%\TunHub\app.log.</summary>
+    /// <summary>Append a diagnostic line to %LOCALAPPDATA%\TunHub\app.log (capped at 5 MB).</summary>
     public static void Log(string where, Exception? ex)
     {
         try
         {
             var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TunHub");
             Directory.CreateDirectory(dir);
-            File.AppendAllText(Path.Combine(dir, "app.log"),
-                $"{DateTimeOffset.Now:u} [{where}] {ex}\n");
+            var path = Path.Combine(dir, "app.log");
+            TrimIfOversized(path);
+            File.AppendAllText(path, $"{DateTimeOffset.Now:u} [{where}] {ex}\n");
+        }
+        catch { /* best effort */ }
+    }
+
+    /// <summary>Keep the last 4 MB of a 5 MB budget — this file previously grew without bound.</summary>
+    private static void TrimIfOversized(string path)
+    {
+        const long maxBytes = 5_000_000, keep = 4_000_000;
+        try
+        {
+            var fi = new FileInfo(path);
+            if (!fi.Exists || fi.Length <= maxBytes) return;
+            byte[] tail;
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                fs.Seek(fs.Length - keep, SeekOrigin.Begin);
+                tail = new byte[keep];
+                _ = fs.Read(tail, 0, tail.Length);
+            }
+            var nl = Array.IndexOf(tail, (byte)'\n');       // start on a record boundary
+            var offset = nl >= 0 ? nl + 1 : 0;
+            using var w = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+            w.Write(tail, offset, tail.Length - offset);
         }
         catch { /* best effort */ }
     }

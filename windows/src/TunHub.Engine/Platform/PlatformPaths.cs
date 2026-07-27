@@ -21,6 +21,9 @@ public static class PlatformPaths
 
     public static string OwnershipFile => Path.Combine(VarDir, "owned.json");
 
+    /// <summary>Persisted log capture mode, shared by the UI and the privileged helper.</summary>
+    public static string LogModeFile => Path.Combine(VarDir, "log-mode");
+
     /// <summary>Locked-down scratch dir for transient OpenVPN config / management-password files.</summary>
     public static string TempDir => OperatingSystem.IsWindows() ? Path.Combine(WinBase, "tmp") : MacRun;
 
