@@ -1,6 +1,6 @@
 import Foundation
 
-public enum LogLevel: String, Codable, Comparable, CaseIterable {
+public enum LogLevel: String, Codable, Comparable, CaseIterable, Sendable {
     case trace, debug, info, warn, error
     var rank: Int { LogLevel.allCases.firstIndex(of: self)! }
     public static func < (a: LogLevel, b: LogLevel) -> Bool { a.rank < b.rank }
