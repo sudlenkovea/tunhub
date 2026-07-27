@@ -17,11 +17,17 @@ enum DaemonVersionStatus: Equatable {
     }
 }
 
-/// App-side log (UI / XPC client). File lives in ~/Library/Logs/TunHub/.
+/// Log-capture mode, read once at launch. Changing it requires a restart (see SettingsView),
+/// so that the file never contains a mix of two verbosity levels.
+let appLogMode: LogCaptureMode = LogSettings.read()
+
+/// App-side log (UI / XPC client). File lives in ~/Library/Logs/TunHub/, capped at 5 MB.
 let applog: FileLog = {
     let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
         .appendingPathComponent(TunHub.AppPath.logsDir, isDirectory: true)
-    return FileLog(path: dir.appendingPathComponent("app.log").path)
+    let l = FileLog(path: dir.appendingPathComponent("app.log").path)
+    l.minLevel = appLogMode.minLevel
+    return l
 }()
 
 /// A request to collect OpenVPN credentials / OTP before connecting.

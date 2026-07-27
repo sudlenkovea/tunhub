@@ -132,7 +132,9 @@ final class TunnelSupervisor {
         p.executableURL = core
         p.arguments = ["utun"]
         // LOG_LEVEL=verbose → the core logs handshake/transport in detail; we capture stderr into our log.
-        let coreLogLevel = ProcessInfo.processInfo.environment["TUNHUB_CORE_LOG"] ?? "verbose"
+        // In normal mode the core only reports errors: its verbose stream is per-packet chatty
+        // and every line costs us a pipe read + a log write for the tunnel's whole lifetime.
+        let coreLogLevel = ProcessInfo.processInfo.environment["TUNHUB_CORE_LOG"] ?? logMode.coreLogLevel
         p.environment = [
             "WG_PROCESS_FOREGROUND": "1",
             "WG_TUN_NAME_FILE": nameFile,

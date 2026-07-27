@@ -363,6 +363,8 @@ struct SettingsView: View {
     @AppStorage("appLanguage") private var appLanguage = "system"
     @State private var pendingLanguageChange = false
     @State private var launchAtLogin = LoginItem.isEnabled
+    @State private var logMode: LogCaptureMode = appLogMode
+    @State private var pendingLogModeChange = false
 
     var body: some View {
         Form {
@@ -405,6 +407,27 @@ struct SettingsView: View {
                 Text("PostUp/PreDown scripts from configs are never executed.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Logging") {
+                Picker("Capture", selection: $logMode) {
+                    ForEach(LogCaptureMode.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .onChange(of: logMode) { newValue in
+                    pendingLogModeChange = (newValue != appLogMode)
+                }
+                Text(logMode == .verbose
+                     ? "Verbose records every command and the tunnel core's own debug output. It is for troubleshooting only — it produces a lot of data and uses noticeably more CPU."
+                     : "Normal records meaningful events. Logs are kept in a single file, trimmed to the last 5 MB.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if pendingLogModeChange {
+                    HStack {
+                        Text("Restart to switch capture mode.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Restart now") { applyLogModeAndRestart() }
+                            .controlSize(.small)
+                    }
+                }
+            }
             Section("System component") {
                 LabeledContent("Status", value: DaemonManager.statusText)
                 Button("Reinstall / restart daemon…") {
@@ -443,6 +466,19 @@ struct SettingsView: View {
         task.arguments = ["-n", path]
         try? task.run()
         NSApp.terminate(nil)
+    }
+
+    /// Persist the new capture mode on BOTH sides, then relaunch. Capture only switches on a
+    /// fresh start, so the log never mixes two verbosity levels within one run.
+    func applyLogModeAndRestart() {
+        let mode = logMode
+        Task {
+            if let err = await state.daemon.setLogMode(mode) {
+                await MainActor.run { state.lastError = "Log mode: \(err)" }
+                return
+            }
+            await MainActor.run { relaunch() }
+        }
     }
 }
 

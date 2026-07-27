@@ -97,6 +97,13 @@ final class DaemonClient {
         return (try? TunJSON.decoder.decode([LogLine].self, from: data)) ?? []
     }
 
+    /// Persist the capture mode on the daemon side (it applies it on its next start).
+    func setLogMode(_ mode: LogCaptureMode) async -> String? {
+        await call(nil as String?) { proxy, box in
+            proxy.setLogMode(mode.rawValue) { box.resume($0) }
+        }
+    }
+
     func version() async -> String? {
         await call(nil as String?) { proxy, box in
             proxy.daemonVersion { box.resume($0) }

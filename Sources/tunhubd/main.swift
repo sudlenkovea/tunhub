@@ -50,6 +50,21 @@ final class DaemonService: NSObject, TunHubDaemonXPC {
         let lines = flog.tail(maxLines: min(max(maxLines, 1), 5000))
         reply((try? TunJSON.encoder.encode(lines)) ?? Data())
     }
+
+    func setLogMode(_ mode: String, reply: @escaping (String?) -> Void) {
+        guard let m = LogCaptureMode(rawValue: mode) else { reply("unknown log mode"); return }
+        guard LogSettings.write(m) else { reply("could not persist the log mode"); return }
+        flog.info("daemon", "log capture mode set to \(m.rawValue) (applies on daemon restart)")
+        reply(nil)
+        // If nothing is running we can adopt the new mode immediately: exit non-zero so
+        // launchd (KeepAlive/SuccessfulExit=false) brings us straight back up. With tunnels
+        // active we must not exit — the new mode applies at the next natural restart.
+        let idle = TunnelSupervisor.shared.states().isEmpty && OpenVPNSupervisor.shared.states().isEmpty
+        if idle {
+            flog.info("daemon", "idle — restarting to apply the new log mode")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(70) }
+        }
+    }
 }
 
 final class ListenerDelegate: NSObject, NSXPCListenerDelegate {

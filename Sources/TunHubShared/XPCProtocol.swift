@@ -1,7 +1,7 @@
 import Foundation
 
 public let kDaemonMachService = TunHub.machService
-public let kDaemonProtocolVersion = "0.8.1"
+public let kDaemonProtocolVersion = "0.8.2"
 
 /// Team ID for the XPC code-signing requirement. Empty = check disabled (dev/ad-hoc).
 public let kTeamID = TunHub.teamID
@@ -18,6 +18,9 @@ public let kTeamID = TunHub.teamID
     func daemonVersion(_ reply: @escaping (String) -> Void)
     /// Last N lines of the daemon log (JSON [LogLine]).
     func recentLog(_ maxLines: Int, reply: @escaping (Data) -> Void)
+    /// Persist the log capture mode (LogCaptureMode raw value) for the daemon side.
+    /// Applied on the daemon's next start; if it is idle it restarts itself right away.
+    func setLogMode(_ mode: String, reply: @escaping (String?) -> Void)
 }
 
 public func codesignRequirementString(teamID: String) -> String {

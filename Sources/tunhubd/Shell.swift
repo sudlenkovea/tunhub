@@ -4,10 +4,17 @@ import TunHubShared
 
 let dlog = Logger(subsystem: "com.tunhub.daemon", category: "daemon")
 
-/// Daemon file log (0644 — read by the app). Everything is written here verbosely.
+/// Capture mode, read once at startup (a live switch is deliberately not supported — see
+/// LogSettings). `.normal` keeps the file to meaningful events; `.verbose` adds every
+/// exec/route call and the core's own DEBUG stream.
+let logMode: LogCaptureMode = LogSettings.read()
+
+/// Daemon file log (0644 — read by the app), trimmed to the last 5 MB.
 let flog: FileLog = {
     let l = FileLog(path: TunHub.DaemonPath.logFile)
-    l.echoStderr = true          // mirror to stderr → visible in `log stream`/launchd
+    l.minLevel = logMode.minLevel
+    // stderr mirroring doubles the write cost for every line; only useful when debugging.
+    l.echoStderr = (logMode == .verbose)
     return l
 }()
 
