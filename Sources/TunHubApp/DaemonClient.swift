@@ -2,18 +2,38 @@ import Foundation
 import ServiceManagement
 import TunHubShared
 
-/// Guarantees a single resume of the continuation (from reply, errorHandler, or timeout).
+/// Guarantees a single resume of the continuation (from reply, errorHandler, or timeout), and
+/// cancels the timeout as soon as one of the other two wins.
+///
+/// The timeout used to be a bare `asyncAfter` that nobody cancelled: it kept the continuation
+/// and the boxed fallback alive for the full timeout regardless of how fast the daemon
+/// answered. At a few calls a second that meant a permanent backlog of pending closures —
+/// steady CPU on the global queue and a memory footprint that only grew.
 private final class OnceBox<T>: @unchecked Sendable {
     private let lock = NSLock()
     private var done = false
     private var cont: CheckedContinuation<T, Never>?
+    private var timeout: DispatchWorkItem?
+
     init(_ c: CheckedContinuation<T, Never>) { cont = c }
-    func resume(_ value: T) {
+
+    func setTimeout(_ item: DispatchWorkItem) {
         lock.lock(); defer { lock.unlock() }
-        guard !done else { return }
+        if done { item.cancel() } else { timeout = item }
+    }
+
+    func resume(_ value: T) {
+        lock.lock()
+        guard !done else { lock.unlock(); return }
         done = true
-        cont?.resume(returning: value)
+        let c = cont
+        let pending = timeout
         cont = nil
+        timeout = nil
+        lock.unlock()
+
+        pending?.cancel()
+        c?.resume(returning: value)
     }
 }
 
@@ -47,10 +67,11 @@ final class DaemonClient {
                 box.resume(fallback)
                 return
             }
-            // timeout safety net, so the UI never hangs
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSec) {
-                box.resume(fallback)
-            }
+            // Timeout safety net, so the UI never hangs. Cancelled by the box the moment the
+            // reply (or an error) arrives.
+            let timeout = DispatchWorkItem { box.resume(fallback) }
+            box.setTimeout(timeout)
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSec, execute: timeout)
             body(proxy, box)
         }
     }
@@ -77,10 +98,14 @@ final class DaemonClient {
         }
     }
 
-    func runtimeStates() async -> [TunnelRuntimeState] {
-        let data: Data = await call(Data()) { proxy, box in
+    /// `nil` means the daemon did not reply — which is NOT the same as "no tunnels are
+    /// running". Distinguishing the two is what lets the poll loop derive reachability from
+    /// this one call instead of following every tick with a separate ping.
+    func runtimeStates() async -> [TunnelRuntimeState]? {
+        let data: Data? = await call(nil as Data?) { proxy, box in
             proxy.runtimeStates { box.resume($0) }
         }
+        guard let data else { return nil }
         return (try? TunJSON.decoder.decode([TunnelRuntimeState].self, from: data)) ?? []
     }
 

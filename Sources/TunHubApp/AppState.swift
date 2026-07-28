@@ -224,17 +224,28 @@ final class AppState: ObservableObject {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.poll()
-                try? await Task.sleep(nanoseconds: 500_000_000)   // 0.5s — responsive speed graph
+                // 0.5 s only buys a responsive speed graph, which is meaningless when nothing
+                // is running. Idle is the state the app spends most of its life in, so poll
+                // four times more slowly there.
+                let busy = self?.hasActiveTunnels ?? false
+                try? await Task.sleep(nanoseconds: busy ? 500_000_000 : 2_000_000_000)
             }
         }
     }
 
+    /// Any tunnel in a state worth watching closely.
+    var hasActiveTunnels: Bool {
+        runtime.values.contains { $0.phase != .stopped && $0.phase != .failed }
+    }
+
     func poll() async {
-        // One XPC round trip per tick: a successful reply already proves the daemon is alive,
-        // so an extra ping() every 500 ms was pure overhead. Only fall back to an explicit
-        // ping when the state call came back empty (which is also the "no tunnels" case).
-        let states = await daemon.runtimeStates()
-        let alive = states.isEmpty ? await daemon.ping() : true
+        // Exactly one XPC round trip per tick. A reply — even an empty list — proves the
+        // daemon is alive, so reachability comes from the same call. The previous version
+        // fell back to a ping whenever the list was empty, which meant *every* tick made two
+        // calls in the common idle case of no tunnels running.
+        let reply = await daemon.runtimeStates()
+        let alive = reply != nil
+        let states = reply ?? []
         if daemonReachable != alive { daemonReachable = alive }
         let installed = DaemonManager.isEnabled || alive
         if daemonInstalled != installed { daemonInstalled = installed }
