@@ -76,19 +76,27 @@ if (-not $SkipCores) {
     Copy-Item (Join-Path $work "wintun\wintun\bin\$wintunArch\wintun.dll") $dist
 
     # OpenVPN: take the executable and its own DLLs from the official MSI, nothing else.
-    $ovpnMsi = Join-Path $work 'openvpn.msi'
-    if (-not (Test-Path $ovpnMsi)) {
-        Invoke-WebRequest 'https://swupdate.openvpn.org/community/releases/OpenVPN-2.6.11-I001-amd64.msi' -OutFile $ovpnMsi
-    }
-    $extract = Join-Path $work 'openvpn-extract'
-    if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
-    Start-Process msiexec.exe -ArgumentList "/a `"$ovpnMsi`" /qn TARGETDIR=`"$extract`"" -Wait
-    $ovpnBin = Get-ChildItem $extract -Recurse -Filter 'openvpn.exe' | Select-Object -First 1
-    if ($ovpnBin) {
-        Copy-Item $ovpnBin.FullName $dist
-        Get-ChildItem $ovpnBin.Directory -Filter '*.dll' | ForEach-Object { Copy-Item $_.FullName $dist }
-    } else {
-        Write-Warning 'openvpn.exe not found in the MSI — OpenVPN tunnels will not work'
+    # A published URL going stale should degrade to "no OpenVPN support" rather than fail the
+    # whole build — WireGuard and AmneziaWG are unaffected by it.
+    try {
+        $ovpnMsi = Join-Path $work 'openvpn.msi'
+        if (-not (Test-Path $ovpnMsi)) {
+            Invoke-WebRequest 'https://swupdate.openvpn.org/community/releases/OpenVPN-2.6.11-I001-amd64.msi' `
+                -OutFile $ovpnMsi -UseBasicParsing
+        }
+        $extract = Join-Path $work 'openvpn-extract'
+        if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
+        Start-Process msiexec.exe -ArgumentList "/a `"$ovpnMsi`" /qn TARGETDIR=`"$extract`"" -Wait
+        $ovpnBin = Get-ChildItem $extract -Recurse -Filter 'openvpn.exe' -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+        if ($ovpnBin) {
+            Copy-Item $ovpnBin.FullName $dist
+            Get-ChildItem $ovpnBin.Directory -Filter '*.dll' | ForEach-Object { Copy-Item $_.FullName $dist }
+        } else {
+            Write-Warning 'openvpn.exe not found in the MSI — OpenVPN tunnels will not work'
+        }
+    } catch {
+        Write-Warning "could not stage OpenVPN ($($_.Exception.Message)) — OpenVPN tunnels will not work"
     }
 }
 
