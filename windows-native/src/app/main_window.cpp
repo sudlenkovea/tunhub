@@ -614,9 +614,10 @@ void layout(HWND hwnd) {
     }
     y += toolbarHeight + gap;
 
-    // Split: list on the left, detail on the right.
-    const int listWidth = std::min(dpiScale(hwnd, metrics::kListWidth),
-                                   (client.right - pad * 2) / 2);
+    // Split: list on the left, detail on the right. RECT members are LONG, so the comparison
+    // needs an explicit type rather than leaving std::min to deduce it.
+    const int listWidth = std::min<int>(dpiScale(hwnd, metrics::kListWidth),
+                                        static_cast<int>(client.right - pad * 2) / 2);
     const int bodyHeight = client.bottom - y - pad;
     MoveWindow(g_state.list, pad, y, listWidth, bodyHeight, TRUE);
 
