@@ -74,7 +74,18 @@ COLORREF phaseColor(TunnelPhase phase);
 void messageBox(HWND owner, const std::string& titleKey, const std::wstring& text,
                 UINT flags = MB_OK | MB_ICONINFORMATION);
 
-/// A dialog font matching the shell, so the UI doesn't look like Windows 95.
+// ── theming ──────────────────────────────────────────────────────────────────
+// Everything is derived from the shell's own message font and DPI, so the app matches the
+// rest of the system instead of hard-coding sizes that break on scaled displays.
+
+/// Body text (the shell's message font).
 HFONT uiFont();
+/// Larger, semibold — the selected tunnel's name.
+HFONT titleFont();
+/// Smaller, dimmed — captions and secondary values.
+HFONT smallFont();
+
+/// Scale a design-time pixel value to the window's DPI.
+int dpiScale(HWND hwnd, int value);
 
 }  // namespace tunhub::app
