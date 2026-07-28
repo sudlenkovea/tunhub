@@ -464,20 +464,39 @@ struct RoutesBox: View {
 
 struct SpeedChart: View {
     let samples: [StatSample]
+
+    /// Samples actually plotted. History keeps ~30 min for statistics, but a chart this size
+    /// can't show more than a couple of hundred points — feeding it thousands only cost
+    /// layout time.
+    private static let maxPoints = 180        // 90 s at the 0.5 s poll interval
+
     struct Point: Identifiable {
-        let id = UUID(); let t: Date; let v: Double; let series: String
+        /// STABLE identity. This used to be `UUID()`, regenerated on every render: with a
+        /// running tunnel the chart got thousands of "new" points twice a second, so Charts
+        /// could never reuse anything and rebuilt (and animated) the entire plot each time —
+        /// one core pinned and a runaway allocation rate.
+        var id: String { "\(series)@\(t.timeIntervalSince1970)" }
+        let t: Date; let v: Double; let series: String
     }
+
     var points: [Point] {
-        samples.flatMap {
-            [Point(t: $0.t, v: $0.rxRate, series: "RX"),
-             Point(t: $0.t, v: $0.txRate, series: "TX")]
+        let window = samples.count > Self.maxPoints ? Array(samples.suffix(Self.maxPoints)) : samples
+        var out: [Point] = []
+        out.reserveCapacity(window.count * 2)
+        for s in window {
+            out.append(Point(t: s.t, v: s.rxRate, series: "RX"))
+            out.append(Point(t: s.t, v: s.txRate, series: "TX"))
         }
+        return out
     }
+
     var body: some View {
         Chart(points) { p in
             LineMark(x: .value("Time", p.t), y: .value("B/s", p.v))
                 .foregroundStyle(by: .value("Series", p.series))
         }
+        // Redrawing is driven by new samples; animating every 0.5 s tick just burns frames.
+        .animation(.none, value: samples.count)
         .chartYAxis {
             AxisMarks { value in
                 AxisValueLabel {

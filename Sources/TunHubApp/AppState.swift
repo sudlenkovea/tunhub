@@ -230,11 +230,14 @@ final class AppState: ObservableObject {
     }
 
     func poll() async {
+        // One XPC round trip per tick: a successful reply already proves the daemon is alive,
+        // so an extra ping() every 500 ms was pure overhead. Only fall back to an explicit
+        // ping when the state call came back empty (which is also the "no tunnels" case).
         let states = await daemon.runtimeStates()
-        // The daemon counts as reachable if it replied over XPC (classic LaunchDaemon or SMAppService).
-        let alive = await daemon.ping()
-        daemonReachable = alive
-        daemonInstalled = DaemonManager.isEnabled || alive
+        let alive = states.isEmpty ? await daemon.ping() : true
+        if daemonReachable != alive { daemonReachable = alive }
+        let installed = DaemonManager.isEnabled || alive
+        if daemonInstalled != installed { daemonInstalled = installed }
         // System DNS is read via a `scutil` subprocess — compute it ONCE at startup (and again
         // only when a tunnel comes up, below), never in a view body. Doing it on every re-render
         // spawned scutil continuously → 100% CPU and a runaway memory footprint.
