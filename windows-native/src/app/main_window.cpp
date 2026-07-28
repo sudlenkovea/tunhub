@@ -1,6 +1,11 @@
 // Main window: a tunnel list on the left and a detail pane on the right, mirroring the macOS
-// layout. The list carries only identity and state; everything about the *selected* tunnel —
+// layout. The list carries identity and state only; everything about the *selected* tunnel —
 // status, the connect action, statistics and the traffic strip — lives in the detail pane.
+//
+// The detail pane is a container window that owns its own controls (title, status, the
+// Start/Stop button, the stats block and the graph). An earlier version drew the pane and
+// placed the button over it as a sibling of the main window, which depended on sibling
+// clipping and z-order to stay visible — and did not.
 
 #include <windows.h>    // must come before any other Windows header
 #include <commctrl.h>
@@ -28,20 +33,28 @@ constexpr UINT kTrayId = 1;
 enum : int {
     IDC_LIST = 1000,
     IDC_IMPORT, IDC_EDIT, IDC_DELETE, IDC_CONFLICTS, IDC_LOGS, IDC_SETTINGS, IDC_STOPALL,
-    IDC_DETAIL, IDC_CONNECT, IDC_GRAPH, IDC_HELPERTEXT, IDC_HELPERBTN,
+    IDC_DETAIL, IDC_HELPERTEXT, IDC_HELPERBTN,
+    // Children of the detail pane.
+    IDC_TITLE = 1100, IDC_SUBTITLE, IDC_STATUS, IDC_CONNECT, IDC_STATS, IDC_GRAPH, IDC_ERROR,
     IDM_TRAY_OPEN = 2000, IDM_TRAY_STOPALL, IDM_TRAY_QUIT, IDM_TRAY_TUNNEL_BASE = 2100,
 };
 
-/// Design-time metrics, scaled to the window's DPI at layout time.
+/// Design-time metrics in 96-dpi units; every use goes through dpiScale.
 namespace metrics {
-constexpr int kPad = 12;           // window padding
-constexpr int kGap = 8;            // gap between controls
-constexpr int kToolbarHeight = 32;
-constexpr int kListWidth = 300;
-constexpr int kGraphHeight = 132;
-constexpr int kHelperBarHeight = 52;
-constexpr int kRowHeight = 24;     // one statistic row in the detail pane
+constexpr int kPad = 14;
+constexpr int kGap = 10;
+constexpr int kToolbarHeight = 34;
+constexpr int kListWidth = 330;
+constexpr int kGraphHeight = 120;
+constexpr int kHelperBarHeight = 44;
+constexpr int kStatRow = 26;
 constexpr int kDotRadius = 5;
+constexpr int kTitleHeight = 34;
+constexpr int kSubtitleHeight = 22;
+constexpr int kStatusHeight = 26;
+constexpr int kButtonHeight = 34;
+constexpr int kButtonWidth = 150;
+constexpr int kErrorHeight = 38;
 }  // namespace metrics
 
 struct ToolbarButton {
@@ -54,20 +67,31 @@ struct ToolbarButton {
 
 struct MainWindowState {
     AppContext* ctx = nullptr;
+    HWND main = nullptr;
     HWND list = nullptr;
     HWND detail = nullptr;
+    // Detail-pane children.
+    HWND title = nullptr;
+    HWND subtitle = nullptr;
+    HWND status = nullptr;
     HWND connect = nullptr;
+    HWND error = nullptr;
+    HWND stats = nullptr;
     HWND graph = nullptr;
+
     HWND helperText = nullptr;
     HWND helperButton = nullptr;
     std::vector<ToolbarButton> toolbar;
     bool helperBarVisible = false;
+    bool errorVisible = false;
 
     NOTIFYICONDATAW tray{};
     bool trayAdded = false;
     HICON iconIdle = nullptr;
     HICON iconActive = nullptr;
     bool lastActive = false;
+
+    COLORREF statusColour = RGB(0, 0, 0);
 };
 
 MainWindowState g_state;
@@ -97,7 +121,6 @@ bool anyTunnelRunning(const AppContext& ctx) {
     return false;
 }
 
-/// Filled circle used as the status indicator, the same idiom as the macOS list.
 void drawStatusDot(HDC dc, int centreX, int centreY, int radius, COLORREF colour) {
     HBRUSH brush = CreateSolidBrush(colour);
     HPEN pen = CreatePen(PS_SOLID, 1, colour);
@@ -119,14 +142,22 @@ void drawText(HDC dc, const std::wstring& text, RECT rc, HFONT font, COLORREF co
     SelectObject(dc, oldFont);
 }
 
+/// Secondary text: the shell has no such system colour, so blend toward the background.
 COLORREF dimText() {
-    // Blend the window text toward the background: the shell has no dedicated "secondary
-    // text" colour, and GrayText is reserved for disabled controls.
     const COLORREF fg = GetSysColor(COLOR_WINDOWTEXT);
     const COLORREF bg = GetSysColor(COLOR_WINDOW);
     auto mix = [](BYTE a, BYTE b) { return static_cast<BYTE>((a * 45 + b * 55) / 100); };
     return RGB(mix(GetRValue(fg), GetRValue(bg)), mix(GetGValue(fg), GetGValue(bg)),
                mix(GetBValue(fg), GetBValue(bg)));
+}
+
+void setTextIfChanged(HWND control, const std::wstring& text) {
+    // SetWindowText repaints unconditionally; at 1 Hz that reads as flicker.
+    const int length = GetWindowTextLengthW(control);
+    std::wstring current(static_cast<size_t>(length) + 1, L'\0');
+    GetWindowTextW(control, current.data(), length + 1);
+    current.resize(static_cast<size_t>(length));
+    if (current != text) SetWindowTextW(control, text.c_str());
 }
 
 // ── tray ─────────────────────────────────────────────────────────────────────
@@ -224,32 +255,44 @@ void showTrayMenu(HWND hwnd) {
 
 // ── tunnel list ──────────────────────────────────────────────────────────────
 
-void setupList(HWND hwnd, HWND list) {
+void setupList(HWND list) {
     ListView_SetExtendedListViewStyle(
         list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
 
-    // Identity and state only. Everything else belongs to the detail pane, the way the macOS
-    // sidebar works — a list crammed with statistics is unreadable at a glance.
-    struct { const char* key; int width; } columns[] = {
-        {"Name", 150}, {"Type", 80}, {"Status", 66},
-    };
-    int index = 0;
-    for (const auto& c : columns) {
-        auto title = loc::w(c.key);
+    // Identity and state only — everything else belongs to the detail pane. Widths are set
+    // from the real client width in sizeListColumns(); fixed widths overflowed at 150% DPI
+    // and produced a horizontal scrollbar.
+    const char* titles[] = {"Name", "Type", "Status"};
+    for (int i = 0; i < 3; ++i) {
+        auto text = loc::w(titles[i]);
         LVCOLUMNW col{};
         col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
-        col.pszText = title.data();
-        col.cx = dpiScale(hwnd, c.width);
-        col.iSubItem = index;
-        ListView_InsertColumn(list, index, &col);
-        ++index;
+        col.pszText = text.data();
+        col.cx = 100;
+        col.iSubItem = i;
+        ListView_InsertColumn(list, i, &col);
     }
+}
+
+/// Proportional columns that always add up to the visible width, so nothing is clipped and
+/// no horizontal scrollbar appears.
+void sizeListColumns(HWND list) {
+    RECT rc{};
+    GetClientRect(list, &rc);
+    int width = rc.right - rc.left;
+    if (width <= 0) return;
+    width -= GetSystemMetrics(SM_CXVSCROLL);   // leave room for the vertical scrollbar
+
+    const int status = std::max<int>(width * 30 / 100, 90);
+    const int type = std::max<int>(width * 24 / 100, 70);
+    const int name = std::max<int>(width - status - type, 90);
+    ListView_SetColumnWidth(list, 0, name);
+    ListView_SetColumnWidth(list, 1, type);
+    ListView_SetColumnWidth(list, 2, status);
 }
 
 void refreshList(AppContext& ctx) {
     HWND list = g_state.list;
-    // Rebuild only when the set of tunnels changed; otherwise update in place so the
-    // selection, scroll position and focus survive the 1 Hz refresh.
     const int existing = ListView_GetItemCount(list);
     const bool rebuild = existing != static_cast<int>(ctx.tunnels.size());
 
@@ -281,8 +324,8 @@ void refreshList(AppContext& ctx) {
 
     if (rebuild) {
         SendMessageW(list, WM_SETREDRAW, TRUE, 0);
+        sizeListColumns(list);
         InvalidateRect(list, nullptr, TRUE);
-        // Keep a selection so the detail pane is never empty for no reason.
         if (!ctx.tunnels.empty() && ctx.selectedId.empty()) {
             ctx.selectedId = ctx.tunnels.front().id;
             ListView_SetItemState(list, 0, LVIS_SELECTED | LVIS_FOCUSED,
@@ -293,8 +336,7 @@ void refreshList(AppContext& ctx) {
     }
 }
 
-/// Custom draw for the Status column: a coloured dot plus the phase, which reads far faster
-/// than plain text and matches the macOS sidebar.
+/// Status column: a coloured dot plus the phase, which reads far faster than plain text.
 LRESULT handleListCustomDraw(AppContext& ctx, LPNMLVCUSTOMDRAW cd) {
     switch (cd->nmcd.dwDrawStage) {
         case CDDS_PREPAINT:
@@ -308,21 +350,22 @@ LRESULT handleListCustomDraw(AppContext& ctx, LPNMLVCUSTOMDRAW cd) {
 
             const auto* rt = ctx.findRuntime(ctx.tunnels[index].id);
             const auto phase = rt ? rt->phase : TunnelPhase::Stopped;
+            HWND list = cd->nmcd.hdr.hwndFrom;
 
             RECT rc{};
             rc.left = LVIR_BOUNDS;
             rc.top = 2;   // subitem index
-            SendMessageW(cd->nmcd.hdr.hwndFrom, LVM_GETSUBITEMRECT,
-                         cd->nmcd.dwItemSpec, reinterpret_cast<LPARAM>(&rc));
+            SendMessageW(list, LVM_GETSUBITEMRECT, cd->nmcd.dwItemSpec,
+                         reinterpret_cast<LPARAM>(&rc));
 
             HDC dc = cd->nmcd.hdc;
-            const int radius = dpiScale(cd->nmcd.hdr.hwndFrom, metrics::kDotRadius);
+            const int radius = dpiScale(list, metrics::kDotRadius);
             const int centreY = (rc.top + rc.bottom) / 2;
-            const int dotX = rc.left + radius + dpiScale(cd->nmcd.hdr.hwndFrom, 4);
+            const int dotX = rc.left + radius + dpiScale(list, 4);
             drawStatusDot(dc, dotX, centreY, radius, phaseColor(phase));
 
             RECT textRect = rc;
-            textRect.left = dotX + radius + dpiScale(cd->nmcd.hdr.hwndFrom, 6);
+            textRect.left = dotX + radius + dpiScale(list, 6);
             const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
             drawText(dc, phaseText(phase), textRect, uiFont(),
                      GetSysColor(selected ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT));
@@ -333,9 +376,8 @@ LRESULT handleListCustomDraw(AppContext& ctx, LPNMLVCUSTOMDRAW cd) {
     }
 }
 
-// ── detail pane ──────────────────────────────────────────────────────────────
+// ── statistics block (owner-drawn child of the detail pane) ──────────────────
 
-/// One "label / value" line.
 struct StatRow {
     std::wstring label;
     std::wstring value;
@@ -355,11 +397,12 @@ std::vector<StatRow> buildStats(const TunnelConfig& t, const TunnelRuntimeState*
         add("Last handshake", hs ? str::widen(util::formatDuration(util::nowUnix() - hs))
                                  : loc::w("never"));
     }
-    for (const auto& p : t.peers)
-        if (p.endpoint) { add("Endpoint", str::widen(*p.endpoint)); break; }
-    if (t.kind == TunnelKind::OpenVpn && t.openVpn)
+    if (t.kind == TunnelKind::OpenVpn && t.openVpn) {
         add("Endpoint", str::widen(t.openVpn->remoteSummary));
-
+    } else {
+        for (const auto& p : t.peers)
+            if (p.endpoint) { add("Endpoint", str::widen(*p.endpoint)); break; }
+    }
     add("Routes", t.hasDefaultRoute() ? loc::w("all traffic (default route)")
                                       : std::to_wstring(t.effectiveRoutes().size()));
     if (!t.iface.dns.empty()) add("DNS", str::widen(str::join(t.iface.dns, ", ")));
@@ -367,18 +410,7 @@ std::vector<StatRow> buildStats(const TunnelConfig& t, const TunnelRuntimeState*
     return rows;
 }
 
-/// Vertical offset of the connect button inside the detail pane. Shared by the painter and
-/// the layout so the two can never disagree about where the button sits.
-int connectButtonOffset(HWND hwnd) {
-    return dpiScale(hwnd, metrics::kPad) +      // top padding
-           dpiScale(hwnd, 30) +                 // title
-           dpiScale(hwnd, 20) +                 // kind
-           dpiScale(hwnd, metrics::kGap) +
-           dpiScale(hwnd, 22) +                 // status line
-           dpiScale(hwnd, metrics::kGap);
-}
-
-void paintDetail(HWND hwnd) {
+void paintStats(HWND hwnd) {
     auto& ctx = *g_state.ctx;
     PAINTSTRUCT ps{};
     HDC dc = BeginPaint(hwnd, &ps);
@@ -386,70 +418,27 @@ void paintDetail(HWND hwnd) {
     GetClientRect(hwnd, &client);
     FillRect(dc, &client, GetSysColorBrush(COLOR_WINDOW));
 
-    const int pad = dpiScale(hwnd, metrics::kPad);
     const auto* t = ctx.findTunnel(ctx.selectedId);
-    if (!t) {
-        RECT rc = client;
-        drawText(dc, loc::w("Select a tunnel"), rc, uiFont(), dimText(),
-                 DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-        EndPaint(hwnd, &ps);
-        return;
-    }
+    if (!t) { EndPaint(hwnd, &ps); return; }
     const auto* rt = ctx.findRuntime(t->id);
-    const auto phase = rt ? rt->phase : TunnelPhase::Stopped;
 
-    int y = pad;
-
-    // Title: name over kind.
-    RECT rc{pad, y, client.right - pad, y + dpiScale(hwnd, 30)};
-    drawText(dc, str::widen(t->name), rc, titleFont(), GetSysColor(COLOR_WINDOWTEXT));
-    y = rc.bottom;
-    rc = {pad, y, client.right - pad, y + dpiScale(hwnd, 20)};
-    drawText(dc, str::widen(kindLabel(t->kind)), rc, smallFont(), dimText());
-    y = rc.bottom + dpiScale(hwnd, metrics::kGap);
-
-    // Status line: coloured dot + phase.
-    const int radius = dpiScale(hwnd, metrics::kDotRadius);
-    const int lineHeight = dpiScale(hwnd, 22);
-    drawStatusDot(dc, pad + radius, y + lineHeight / 2, radius, phaseColor(phase));
-    rc = {pad + radius * 2 + dpiScale(hwnd, 8), y, client.right - pad, y + lineHeight};
-    drawText(dc, phaseText(phase), rc, uiFont(), phaseColor(phase));
-
-    // The connect button is a real child window placed by layout(); skip the band it occupies.
-    y = connectButtonOffset(hwnd) + dpiScale(hwnd, 30) + dpiScale(hwnd, metrics::kGap);
-
-    // Any error goes *below* the button, so its appearance never shifts the button.
-    if (rt && !rt->errorMessage.empty()) {
-        rc = {pad, y, client.right - pad, y + dpiScale(hwnd, 34)};
-        drawText(dc, str::widen(rt->errorMessage), rc, smallFont(), phaseColor(TunnelPhase::Failed),
-                 DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
-        y = rc.bottom + dpiScale(hwnd, 4);
-    }
-
-    // Separator.
-    RECT line{pad, y, client.right - pad, y + 1};
-    FillRect(dc, &line, GetSysColorBrush(COLOR_BTNFACE));
-    y += dpiScale(hwnd, metrics::kGap);
-
-    // Statistics: labels in a fixed left column, values right of them.
-    const int labelWidth = dpiScale(hwnd, 130);
-    const int rowHeight = dpiScale(hwnd, metrics::kRowHeight);
-    const int graphTop = client.bottom - pad - dpiScale(hwnd, metrics::kGraphHeight);
+    const int labelWidth = dpiScale(hwnd, 150);
+    const int rowHeight = dpiScale(hwnd, metrics::kStatRow);
+    int y = 0;
     for (const auto& row : buildStats(*t, rt)) {
-        if (y + rowHeight > graphTop) break;   // never overlap the graph
-        RECT labelRect{pad, y, pad + labelWidth, y + rowHeight};
+        if (y + rowHeight > client.bottom) break;
+        RECT labelRect{0, y, labelWidth, y + rowHeight};
         drawText(dc, row.label, labelRect, smallFont(), dimText());
-        RECT valueRect{pad + labelWidth, y, client.right - pad, y + rowHeight};
+        RECT valueRect{labelWidth, y, client.right, y + rowHeight};
         drawText(dc, row.value, valueRect, uiFont(), GetSysColor(COLOR_WINDOWTEXT));
         y += rowHeight;
     }
-
     EndPaint(hwnd, &ps);
 }
 
-LRESULT CALLBACK detailProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (msg == WM_PAINT) { paintDetail(hwnd); return 0; }
-    if (msg == WM_ERASEBKGND) return 1;   // painted in full by WM_PAINT
+LRESULT CALLBACK statsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_PAINT) { paintStats(hwnd); return 0; }
+    if (msg == WM_ERASEBKGND) return 1;
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
@@ -463,11 +452,12 @@ void paintGraph(HWND hwnd) {
     GetClientRect(hwnd, &rc);
 
     FillRect(dc, &rc, GetSysColorBrush(COLOR_WINDOW));
-    FrameRect(dc, &rc, GetSysColorBrush(COLOR_BTNFACE));
+    FrameRect(dc, &rc, GetSysColorBrush(COLOR_BTNSHADOW));
 
     const COLORREF downColour = RGB(58, 132, 214);
     const COLORREF upColour = RGB(214, 132, 48);
-    const int pad = dpiScale(hwnd, 6);
+    const int pad = dpiScale(hwnd, 8);
+    const int legendHeight = dpiScale(hwnd, 18);
 
     auto it = ctx.history.find(ctx.selectedId);
     const bool haveData = it != ctx.history.end() && it->second.size() >= 2;
@@ -478,9 +468,9 @@ void paintGraph(HWND hwnd) {
 
     if (haveData) {
         const auto& samples = it->second;
-        const int width = rc.right - rc.left - pad * 2;
-        const int height = rc.bottom - rc.top - pad * 2 - dpiScale(hwnd, 14);
-        const int top = rc.top + pad + dpiScale(hwnd, 14);
+        const int width = rc.right - pad * 2;
+        const int top = rc.top + pad + legendHeight;
+        const int height = rc.bottom - pad - top;
         const size_t count = samples.size();
 
         auto drawSeries = [&](bool rx, COLORREF colour) {
@@ -500,26 +490,27 @@ void paintGraph(HWND hwnd) {
         drawSeries(false, upColour);
     }
 
-    // Legend: current rate per direction, so the strip is readable without axes.
+    // Legend with the live rates, so the strip is readable without axes.
     const Sample latest = haveData ? it->second.back() : Sample{};
-    const int legendY = rc.top + pad;
-    const int dot = dpiScale(hwnd, 3);
+    const int legendY = rc.top + pad / 2;
+    const int dot = dpiScale(hwnd, 4);
+    const int columnWidth = dpiScale(hwnd, 130);
     int x = rc.left + pad;
 
-    drawStatusDot(dc, x + dot, legendY + dpiScale(hwnd, 7), dot, downColour);
-    RECT legend{x + dot * 2 + dpiScale(hwnd, 4), legendY, x + dpiScale(hwnd, 110),
-                legendY + dpiScale(hwnd, 14)};
-    drawText(dc, L"↓ " + str::widen(str::humanRate(latest.rxRate)), legend, smallFont(), dimText());
+    drawStatusDot(dc, x + dot, legendY + legendHeight / 2, dot, downColour);
+    RECT legend{x + dot * 2 + dpiScale(hwnd, 6), legendY, x + columnWidth, legendY + legendHeight};
+    drawText(dc, L"↓ " + str::widen(str::humanRate(latest.rxRate)), legend, smallFont(),
+             GetSysColor(COLOR_WINDOWTEXT));
 
-    x = legend.right + dpiScale(hwnd, 8);
-    drawStatusDot(dc, x + dot, legendY + dpiScale(hwnd, 7), dot, upColour);
-    legend = {x + dot * 2 + dpiScale(hwnd, 4), legendY, x + dpiScale(hwnd, 110),
-              legendY + dpiScale(hwnd, 14)};
-    drawText(dc, L"↑ " + str::widen(str::humanRate(latest.txRate)), legend, smallFont(), dimText());
+    x = legend.right + dpiScale(hwnd, 10);
+    drawStatusDot(dc, x + dot, legendY + legendHeight / 2, dot, upColour);
+    legend = {x + dot * 2 + dpiScale(hwnd, 6), legendY, x + columnWidth, legendY + legendHeight};
+    drawText(dc, L"↑ " + str::widen(str::humanRate(latest.txRate)), legend, smallFont(),
+             GetSysColor(COLOR_WINDOWTEXT));
 
     if (haveData) {
-        RECT peakRect{rc.right - dpiScale(hwnd, 120), legendY, rc.right - pad,
-                      legendY + dpiScale(hwnd, 14)};
+        RECT peakRect{rc.right - dpiScale(hwnd, 150), legendY, rc.right - pad,
+                      legendY + legendHeight};
         drawText(dc, str::widen("peak " + str::humanRate(peak)), peakRect, smallFont(), dimText(),
                  DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
     }
@@ -533,45 +524,178 @@ LRESULT CALLBACK graphProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+// ── detail pane ──────────────────────────────────────────────────────────────
+
+/// Lays out the pane's own children. Everything here is a real control, so nothing depends on
+/// paint order to be visible.
+void layoutDetail(HWND pane) {
+    // WM_SIZE reaches the pane while it is still being created, before its children exist.
+    if (!g_state.title || !g_state.graph) return;
+
+    RECT client{};
+    GetClientRect(pane, &client);
+    const int pad = dpiScale(pane, metrics::kPad);
+    const int gap = dpiScale(pane, metrics::kGap);
+    const int width = client.right - pad * 2;
+    if (width <= 0) return;
+
+    int y = pad;
+    auto place = [&](HWND control, int height, int controlWidth = 0) {
+        MoveWindow(control, pad, y, controlWidth ? controlWidth : width, height, TRUE);
+        y += height;
+    };
+
+    place(g_state.title, dpiScale(pane, metrics::kTitleHeight));
+    place(g_state.subtitle, dpiScale(pane, metrics::kSubtitleHeight));
+    y += gap;
+    place(g_state.status, dpiScale(pane, metrics::kStatusHeight));
+    y += gap;
+    place(g_state.connect, dpiScale(pane, metrics::kButtonHeight),
+          dpiScale(pane, metrics::kButtonWidth));
+    y += gap;
+
+    if (g_state.errorVisible) {
+        place(g_state.error, dpiScale(pane, metrics::kErrorHeight));
+        y += gap;
+    } else {
+        MoveWindow(g_state.error, pad, y, width, 0, TRUE);
+    }
+
+    const int graphHeight = dpiScale(pane, metrics::kGraphHeight);
+    const int graphTop = client.bottom - pad - graphHeight;
+    const int statsHeight = std::max<int>(graphTop - gap - y, 0);
+    MoveWindow(g_state.stats, pad, y, width, statsHeight, TRUE);
+    MoveWindow(g_state.graph, pad, graphTop, width, graphHeight, TRUE);
+}
+
+void paintDetail(HWND hwnd) {
+    PAINTSTRUCT ps{};
+    HDC dc = BeginPaint(hwnd, &ps);
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    FillRect(dc, &client, GetSysColorBrush(COLOR_WINDOW));
+
+    auto& ctx = *g_state.ctx;
+    if (!g_state.stats || !ctx.findTunnel(ctx.selectedId)) {
+        if (!ctx.findTunnel(ctx.selectedId))
+            drawText(dc, loc::w("Select a tunnel"), client, uiFont(), dimText(),
+                     DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        EndPaint(hwnd, &ps);
+        return;
+    }
+
+    // Separator above the statistics block, matching the macOS overview.
+    RECT statsRect{};
+    GetWindowRect(g_state.stats, &statsRect);
+    MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&statsRect), 2);
+    const int pad = dpiScale(hwnd, metrics::kPad);
+    RECT line{pad, statsRect.top - dpiScale(hwnd, 6), client.right - pad,
+              statsRect.top - dpiScale(hwnd, 6) + 1};
+    FillRect(dc, &line, GetSysColorBrush(COLOR_BTNFACE));
+
+    // The coloured status dot, drawn to the left of the status label.
+    RECT statusRect{};
+    GetWindowRect(g_state.status, &statusRect);
+    MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&statusRect), 2);
+    const int radius = dpiScale(hwnd, metrics::kDotRadius);
+    drawStatusDot(dc, statusRect.left + radius, (statusRect.top + statusRect.bottom) / 2, radius,
+                  g_state.statusColour);
+
+    EndPaint(hwnd, &ps);
+}
+
+LRESULT CALLBACK detailProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+        case WM_PAINT:
+            paintDetail(hwnd);
+            return 0;
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_SIZE:
+            layoutDetail(hwnd);
+            return 0;
+        case WM_COMMAND:
+            // The pane owns the button; the main window owns the behaviour.
+            return SendMessageW(GetParent(hwnd), WM_COMMAND, wParam, lParam);
+        case WM_CTLCOLORSTATIC: {
+            HDC dc = reinterpret_cast<HDC>(wParam);
+            HWND control = reinterpret_cast<HWND>(lParam);
+            SetBkMode(dc, TRANSPARENT);
+            if (control == g_state.status)        SetTextColor(dc, g_state.statusColour);
+            else if (control == g_state.subtitle) SetTextColor(dc, dimText());
+            else if (control == g_state.error)    SetTextColor(dc, phaseColor(TunnelPhase::Failed));
+            else                                  SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
+            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+        }
+        default:
+            break;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+/// Push the selected tunnel's data into the pane's controls.
+void refreshDetail(AppContext& ctx) {
+    const auto* t = ctx.findTunnel(ctx.selectedId);
+    const int show = t ? SW_SHOW : SW_HIDE;
+    for (HWND control : {g_state.title, g_state.subtitle, g_state.status, g_state.connect,
+                         g_state.stats, g_state.graph})
+        ShowWindow(control, show);
+
+    if (!t) {
+        ShowWindow(g_state.error, SW_HIDE);
+        InvalidateRect(g_state.detail, nullptr, TRUE);
+        return;
+    }
+
+    const auto* rt = ctx.findRuntime(t->id);
+    const auto phase = rt ? rt->phase : TunnelPhase::Stopped;
+
+    setTextIfChanged(g_state.title, str::widen(t->name));
+    setTextIfChanged(g_state.subtitle, str::widen(kindLabel(t->kind)));
+    // Leading spaces leave room for the dot the pane paints.
+    setTextIfChanged(g_state.status, L"    " + phaseText(phase));
+    setTextIfChanged(g_state.connect, tunnelIsUp(rt) ? loc::w("Stop") : loc::w("Start"));
+    EnableWindow(g_state.connect, !tunnelIsBusy(rt));
+
+    if (const COLORREF colour = phaseColor(phase); colour != g_state.statusColour) {
+        g_state.statusColour = colour;
+        InvalidateRect(g_state.status, nullptr, TRUE);
+        InvalidateRect(g_state.detail, nullptr, FALSE);
+    }
+
+    const bool showError = rt && !rt->errorMessage.empty();
+    if (showError) setTextIfChanged(g_state.error, str::widen(rt->errorMessage));
+    if (showError != g_state.errorVisible) {
+        g_state.errorVisible = showError;
+        ShowWindow(g_state.error, showError ? SW_SHOW : SW_HIDE);
+        layoutDetail(g_state.detail);
+    }
+
+    InvalidateRect(g_state.stats, nullptr, FALSE);
+    InvalidateRect(g_state.graph, nullptr, FALSE);
+}
+
 // ── toolbar / layout ─────────────────────────────────────────────────────────
 
-/// Ask each button how wide it wants to be, so labels are never clipped and the toolbar
-/// stays proportionate in any language or DPI.
+/// Ask each button how wide it wants to be, so labels are never clipped in any language.
 void measureToolbar(HWND hwnd) {
-    const int minWidth = dpiScale(hwnd, 84);
-    const int padding = dpiScale(hwnd, 20);
+    const int minWidth = dpiScale(hwnd, 90);
+    const int padding = dpiScale(hwnd, 24);
     for (auto& b : g_state.toolbar) {
         SIZE ideal{};
         if (SendMessageW(b.hwnd, BCM_GETIDEALSIZE, 0, reinterpret_cast<LPARAM>(&ideal)) &&
-            ideal.cx > 0) {
-            b.width = std::max(minWidth, static_cast<int>(ideal.cx) + padding);
-        } else {
+            ideal.cx > 0)
+            b.width = std::max<int>(minWidth, static_cast<int>(ideal.cx) + padding);
+        else
             b.width = minWidth;
-        }
     }
 }
 
 void updateActionStates(AppContext& ctx) {
-    const auto* rt = ctx.findRuntime(ctx.selectedId);
     const bool haveSelection = ctx.findTunnel(ctx.selectedId) != nullptr;
-    const bool up = tunnelIsUp(rt);
-    const bool busy = tunnelIsBusy(rt);
-
-    EnableWindow(g_state.connect, haveSelection && !busy);
-    ShowWindow(g_state.connect, haveSelection ? SW_SHOW : SW_HIDE);
-
-    // Only touch the caption when it actually changes: this runs once a second, and
-    // SetWindowText repaints unconditionally, which reads as a flicker.
-    const std::wstring wanted = up ? loc::w("Stop") : loc::w("Start");
-    wchar_t current[64]{};
-    GetWindowTextW(g_state.connect, current, 64);
-    if (wanted != current) SetWindowTextW(g_state.connect, wanted.c_str());
-
     for (const auto& b : g_state.toolbar) {
-        if (b.id == IDC_EDIT || b.id == IDC_DELETE)
-            EnableWindow(b.hwnd, haveSelection);
-        else if (b.id == IDC_STOPALL)
-            EnableWindow(b.hwnd, anyTunnelRunning(ctx));
+        if (b.id == IDC_EDIT || b.id == IDC_DELETE) EnableWindow(b.hwnd, haveSelection);
+        else if (b.id == IDC_STOPALL) EnableWindow(b.hwnd, anyTunnelRunning(ctx));
     }
 }
 
@@ -581,23 +705,20 @@ void layout(HWND hwnd) {
     const int pad = dpiScale(hwnd, metrics::kPad);
     const int gap = dpiScale(hwnd, metrics::kGap);
     const int toolbarHeight = dpiScale(hwnd, metrics::kToolbarHeight);
-
     int y = pad;
 
-    // Helper bar, shown only while the service is unreachable.
     ShowWindow(g_state.helperText, g_state.helperBarVisible ? SW_SHOW : SW_HIDE);
     ShowWindow(g_state.helperButton, g_state.helperBarVisible ? SW_SHOW : SW_HIDE);
     if (g_state.helperBarVisible) {
+        const int buttonWidth = dpiScale(hwnd, 230);
         const int barHeight = dpiScale(hwnd, metrics::kHelperBarHeight);
-        const int buttonWidth = dpiScale(hwnd, 200);
-        MoveWindow(g_state.helperText, pad, y, client.right - pad * 2 - buttonWidth - gap,
-                   barHeight, TRUE);
+        MoveWindow(g_state.helperText, pad, y,
+                   std::max<int>(client.right - pad * 2 - buttonWidth - gap, 0), barHeight, TRUE);
         MoveWindow(g_state.helperButton, client.right - pad - buttonWidth,
                    y + (barHeight - toolbarHeight) / 2, buttonWidth, toolbarHeight, TRUE);
         y += barHeight + gap;
     }
 
-    // Toolbar: leading group on the left, utility group flushed right.
     measureToolbar(hwnd);
     int leftX = pad;
     int rightX = client.right - pad;
@@ -614,26 +735,15 @@ void layout(HWND hwnd) {
     }
     y += toolbarHeight + gap;
 
-    // Split: list on the left, detail on the right. RECT members are LONG, so the comparison
-    // needs an explicit type rather than leaving std::min to deduce it.
     const int listWidth = std::min<int>(dpiScale(hwnd, metrics::kListWidth),
-                                        static_cast<int>(client.right - pad * 2) / 2);
-    const int bodyHeight = client.bottom - y - pad;
+                                        static_cast<int>(client.right - pad * 2) * 2 / 5);
+    const int bodyHeight = std::max<int>(client.bottom - y - pad, 0);
     MoveWindow(g_state.list, pad, y, listWidth, bodyHeight, TRUE);
+    sizeListColumns(g_state.list);
 
     const int detailX = pad + listWidth + gap;
-    const int detailWidth = client.right - pad - detailX;
-    MoveWindow(g_state.detail, detailX, y, detailWidth, bodyHeight, TRUE);
-
-    // The connect button sits over the detail pane, under the status line — the same offset
-    // the painter skips.
-    MoveWindow(g_state.connect, detailX + dpiScale(hwnd, metrics::kPad),
-               y + connectButtonOffset(hwnd), dpiScale(hwnd, 132), dpiScale(hwnd, 30), TRUE);
-
-    const int graphHeight = dpiScale(hwnd, metrics::kGraphHeight);
-    MoveWindow(g_state.graph, detailX + dpiScale(hwnd, metrics::kPad),
-               y + bodyHeight - pad - graphHeight,
-               detailWidth - dpiScale(hwnd, metrics::kPad) * 2, graphHeight, TRUE);
+    MoveWindow(g_state.detail, detailX, y, std::max<int>(client.right - pad - detailX, 0),
+               bodyHeight, TRUE);
 }
 
 // ── actions ──────────────────────────────────────────────────────────────────
@@ -670,14 +780,14 @@ void onCommand(HWND hwnd, int id) {
         case IDC_IMPORT:
             runImport(ctx);
             refreshList(ctx);
-            InvalidateRect(g_state.detail, nullptr, TRUE);
+            refreshDetail(ctx);
             break;
         case IDC_EDIT:
             if (!ctx.selectedId.empty()) {
                 showEditorDialog(ctx, ctx.selectedId);
                 ctx.reloadTunnels();
                 refreshList(ctx);
-                InvalidateRect(g_state.detail, nullptr, TRUE);
+                refreshDetail(ctx);
             }
             break;
         case IDC_DELETE: {
@@ -692,7 +802,7 @@ void onCommand(HWND hwnd, int id) {
                 ctx.selectedId.clear();
                 ctx.reloadTunnels();
                 refreshList(ctx);
-                InvalidateRect(g_state.detail, nullptr, TRUE);
+                refreshDetail(ctx);
             }
             break;
         }
@@ -705,6 +815,7 @@ void onCommand(HWND hwnd, int id) {
         default: break;
     }
     updateActionStates(ctx);
+    refreshDetail(ctx);
 }
 
 // ── polling ──────────────────────────────────────────────────────────────────
@@ -734,7 +845,6 @@ void poll(AppContext& ctx) {
         series.push_back(sample);
         while (series.size() > AppContext::kMaxSamples) series.pop_front();
     }
-    // Drop history for tunnels that stopped, so their graph doesn't freeze on the last value.
     for (auto it = ctx.history.begin(); it != ctx.history.end();)
         it = fresh.count(it->first) ? std::next(it) : ctx.history.erase(it);
     for (auto it = ctx.lastCounters.begin(); it != ctx.lastCounters.end();)
@@ -743,7 +853,7 @@ void poll(AppContext& ctx) {
     ctx.runtime = std::move(fresh);
 }
 
-// ── window procedure ─────────────────────────────────────────────────────────
+// ── window creation ──────────────────────────────────────────────────────────
 
 HWND makeButton(HWND parent, int id, const std::wstring& text, DWORD extraStyle = 0) {
     HWND b = CreateWindowExW(0, L"BUTTON", text.c_str(),
@@ -754,14 +864,40 @@ HWND makeButton(HWND parent, int id, const std::wstring& text, DWORD extraStyle 
     return b;
 }
 
+HWND makeLabel(HWND parent, int id, HFONT font, DWORD extraStyle = 0) {
+    HWND s = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT | extraStyle,
+                             0, 0, 0, 0, parent,
+                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
+    SendMessageW(s, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    return s;
+}
+
+void createDetailChildren(HWND pane) {
+    g_state.title = makeLabel(pane, IDC_TITLE, titleFont(), SS_ENDELLIPSIS);
+    g_state.subtitle = makeLabel(pane, IDC_SUBTITLE, smallFont(), SS_ENDELLIPSIS);
+    g_state.status = makeLabel(pane, IDC_STATUS, uiFont(), SS_ENDELLIPSIS);
+    g_state.connect = makeButton(pane, IDC_CONNECT, loc::w("Start"), BS_DEFPUSHBUTTON);
+    g_state.error = makeLabel(pane, IDC_ERROR, smallFont());
+    ShowWindow(g_state.error, SW_HIDE);
+
+    g_state.stats = CreateWindowExW(0, L"TunHubStats", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0,
+                                    pane, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_STATS)),
+                                    nullptr, nullptr);
+    g_state.graph = CreateWindowExW(0, L"TunHubGraph", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0,
+                                    pane, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_GRAPH)),
+                                    nullptr, nullptr);
+}
+
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     auto& ctx = *g_state.ctx;
 
     switch (msg) {
         case WM_CREATE: {
+            g_state.main = hwnd;
+
             g_state.helperText = CreateWindowExW(
                 0, L"STATIC",
-                (loc::w("System component not running") + L"\n" +
+                (loc::w("System component not running") + L" — " +
                  loc::w("TunHub needs a background service to manage tunnels.")).c_str(),
                 WS_CHILD | SS_LEFT, 0, 0, 0, 0, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_HELPERTEXT)), nullptr, nullptr);
@@ -788,25 +924,13 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIST)),
                 nullptr, nullptr);
             SendMessageW(g_state.list, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
-            setupList(hwnd, g_state.list);
+            setupList(g_state.list);
 
-            // WS_CLIPSIBLINGS: the detail pane paints its whole client area, and the connect
-            // button and graph sit on top of it — without this they would be painted over.
             g_state.detail = CreateWindowExW(
                 WS_EX_CLIENTEDGE, L"TunHubDetailPane", L"",
-                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 0, 0, hwnd,
+                WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0, 0, 0, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_DETAIL)), nullptr, nullptr);
-
-            // Primary action, placed next to the selected tunnel's status rather than in the
-            // toolbar — it acts on that one tunnel, the way the macOS overview does it.
-            g_state.connect = makeButton(hwnd, IDC_CONNECT, loc::w("Start"),
-                                         BS_DEFPUSHBUTTON | WS_CLIPSIBLINGS);
-
-            g_state.graph = CreateWindowExW(0, L"TunHubGraph", L"",
-                                            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 0, 0,
-                                            hwnd,
-                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_GRAPH)),
-                                            nullptr, nullptr);
+            createDetailChildren(g_state.detail);
 
             g_state.iconIdle = makeStatusIcon(false);
             g_state.iconActive = makeStatusIcon(true);
@@ -820,18 +944,27 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             layout(hwnd);
             return 0;
 
+        case WM_GETMINMAXINFO: {
+            // Below this the panes stop making sense and controls start overlapping.
+            auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+            info->ptMinTrackSize.x = dpiScale(hwnd, 820);
+            info->ptMinTrackSize.y = dpiScale(hwnd, 520);
+            return 0;
+        }
+
         case WM_DPICHANGED: {
-            // Drop the cached fonts so they are rebuilt against the new scale, take the
-            // suggested rectangle, then re-lay everything out.
             for (HFONT* font : {&g_uiFont, &g_titleFont, &g_smallFont}) {
                 if (*font && *font != GetStockObject(DEFAULT_GUI_FONT)) DeleteObject(*font);
                 *font = nullptr;
             }
             for (const auto& b : g_state.toolbar)
                 SendMessageW(b.hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
-            for (HWND child : {g_state.list, g_state.connect, g_state.helperText,
-                               g_state.helperButton})
+            for (HWND child : {g_state.list, g_state.helperText, g_state.helperButton,
+                               g_state.status, g_state.connect})
                 SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
+            SendMessageW(g_state.title, WM_SETFONT, reinterpret_cast<WPARAM>(titleFont()), TRUE);
+            SendMessageW(g_state.subtitle, WM_SETFONT, reinterpret_cast<WPARAM>(smallFont()), TRUE);
+            SendMessageW(g_state.error, WM_SETFONT, reinterpret_cast<WPARAM>(smallFont()), TRUE);
 
             auto* target = reinterpret_cast<RECT*>(lParam);
             SetWindowPos(hwnd, nullptr, target->left, target->top,
@@ -851,8 +984,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 refreshList(ctx);
                 updateActionStates(ctx);
-                InvalidateRect(g_state.detail, nullptr, FALSE);
-                InvalidateRect(g_state.graph, nullptr, FALSE);
+                refreshDetail(ctx);
                 updateTrayIcon(hwnd);
             }
             return 0;
@@ -875,8 +1007,8 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     if (index < ctx.tunnels.size()) {
                         ctx.selectedId = ctx.tunnels[index].id;
                         updateActionStates(ctx);
+                        refreshDetail(ctx);
                         InvalidateRect(g_state.detail, nullptr, TRUE);
-                        InvalidateRect(g_state.graph, nullptr, TRUE);
                     }
                 }
             } else if (header->code == NM_DBLCLK) {
@@ -886,7 +1018,6 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
 
         case WM_CTLCOLORSTATIC:
-            // The helper bar sits on the window background, not on a white field.
             SetBkMode(reinterpret_cast<HDC>(wParam), TRANSPARENT);
             return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
 
@@ -939,17 +1070,13 @@ void AppContext::reloadTunnels() { tunnels = store.loadTunnels(); }
 // ── theming ──────────────────────────────────────────────────────────────────
 
 int dpiScale(HWND hwnd, int value) {
-    UINT dpi = 96;
-    if (hwnd) {
-        // GetDpiForWindow is per-monitor aware; the desktop DC is the fallback for callers
-        // that run before the window exists.
-        dpi = GetDpiForWindow(hwnd);
-    }
+    UINT dpi = hwnd ? GetDpiForWindow(hwnd) : 0;
     if (dpi == 0) {
         HDC screen = GetDC(nullptr);
         dpi = static_cast<UINT>(GetDeviceCaps(screen, LOGPIXELSY));
         ReleaseDC(nullptr, screen);
     }
+    if (dpi == 0) dpi = 96;
     return MulDiv(value, static_cast<int>(dpi), 96);
 }
 
@@ -965,20 +1092,19 @@ HFONT uiFont() {
 
 /// Derive a variant of the shell font rather than naming a family, so the app follows the
 /// system's font choice and any accessibility overrides.
-HFONT derivedFont(int pointDelta, int weight) {
+HFONT derivedFont(int heightDelta, int weight) {
     NONCLIENTMETRICSW metrics{sizeof(metrics)};
     if (!SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0))
         return uiFont();
     LOGFONTW lf = metrics.lfMessageFont;
-    // lfHeight is negative (character height); grow away from zero.
-    lf.lfHeight -= pointDelta;
+    lf.lfHeight -= heightDelta;   // lfHeight is negative; grow away from zero
     lf.lfWeight = weight;
     HFONT font = CreateFontIndirectW(&lf);
     return font ? font : uiFont();
 }
 
 HFONT titleFont() {
-    if (!g_titleFont) g_titleFont = derivedFont(6, FW_SEMIBOLD);
+    if (!g_titleFont) g_titleFont = derivedFont(7, FW_SEMIBOLD);
     return g_titleFont;
 }
 
@@ -1003,9 +1129,9 @@ COLORREF phaseColor(TunnelPhase phase) {
         case TunnelPhase::Up:       return RGB(46, 160, 90);
         case TunnelPhase::Degraded:
         case TunnelPhase::Starting:
-        case TunnelPhase::Stopping: return RGB(215, 145, 40);
+        case TunnelPhase::Stopping: return RGB(200, 135, 30);
         case TunnelPhase::Failed:   return RGB(200, 60, 60);
-        default:                    return RGB(140, 140, 140);
+        default:                    return RGB(130, 130, 130);
     }
 }
 
@@ -1021,20 +1147,19 @@ bool createMainWindow(AppContext& ctx) {
     INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&icc);
 
-    // Child classes for the two owner-painted panes.
-    WNDCLASSEXW detailClass{sizeof(detailClass)};
-    detailClass.lpfnWndProc = detailProc;
-    detailClass.hInstance = ctx.instance;
-    detailClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    detailClass.lpszClassName = L"TunHubDetailPane";
-    RegisterClassExW(&detailClass);
-
-    WNDCLASSEXW graphClass{sizeof(graphClass)};
-    graphClass.lpfnWndProc = graphProc;
-    graphClass.hInstance = ctx.instance;
-    graphClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    graphClass.lpszClassName = L"TunHubGraph";
-    RegisterClassExW(&graphClass);
+    struct { const wchar_t* name; WNDPROC proc; } childClasses[] = {
+        {L"TunHubDetailPane", detailProc},
+        {L"TunHubStats", statsProc},
+        {L"TunHubGraph", graphProc},
+    };
+    for (const auto& c : childClasses) {
+        WNDCLASSEXW wc{sizeof(wc)};
+        wc.lpfnWndProc = c.proc;
+        wc.hInstance = ctx.instance;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.lpszClassName = c.name;
+        RegisterClassExW(&wc);
+    }
 
     WNDCLASSEXW wc{sizeof(wc)};
     wc.lpfnWndProc = wndProc;
@@ -1047,7 +1172,7 @@ bool createMainWindow(AppContext& ctx) {
     if (!RegisterClassExW(&wc)) return false;
 
     HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"TunHub", WS_OVERLAPPEDWINDOW,
-                                CW_USEDEFAULT, CW_USEDEFAULT, 960, 600,
+                                CW_USEDEFAULT, CW_USEDEFAULT, 1040, 660,
                                 nullptr, nullptr, ctx.instance, nullptr);
     if (!hwnd) return false;
     ctx.mainWindow = hwnd;
@@ -1056,6 +1181,7 @@ bool createMainWindow(AppContext& ctx) {
     refreshList(ctx);
     updateActionStates(ctx);
     layout(hwnd);
+    refreshDetail(ctx);
     return true;
 }
 

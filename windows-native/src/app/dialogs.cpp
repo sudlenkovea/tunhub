@@ -27,21 +27,29 @@
 namespace tunhub::app {
 namespace {
 
-constexpr int kLabelWidth = 130;
-constexpr int kRowHeight = 28;
+// All coordinates below are design-time (96 dpi) units. Every control-creation helper scales
+// them through dpiScale, so one change covers the whole dialog layout — passing raw pixels
+// produced cramped, overlapping dialogs on scaled displays.
+constexpr int kLabelWidth = 150;
+constexpr int kRowHeight = 30;
+constexpr int kEditHeight = 26;
 
 HWND label(HWND parent, const std::wstring& text, int x, int y, int w = kLabelWidth) {
     HWND h = CreateWindowExW(0, L"STATIC", text.c_str(), WS_CHILD | WS_VISIBLE | SS_LEFT,
-                             x, y + 4, w, 20, parent, nullptr, nullptr, nullptr);
+                             dpiScale(parent, x), dpiScale(parent, y + 5),
+                             dpiScale(parent, w), dpiScale(parent, 20),
+                             parent, nullptr, nullptr, nullptr);
     SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
     return h;
 }
 
-HWND edit(HWND parent, const std::wstring& text, int x, int y, int w, int h = 24,
+HWND edit(HWND parent, const std::wstring& text, int x, int y, int w, int h = kEditHeight,
           DWORD extra = 0) {
     HWND e = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", text.c_str(),
                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL | extra,
-                             x, y, w, h, parent, nullptr, nullptr, nullptr);
+                             dpiScale(parent, x), dpiScale(parent, y),
+                             dpiScale(parent, w), dpiScale(parent, h),
+                             parent, nullptr, nullptr, nullptr);
     SendMessageW(e, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
     return e;
 }
@@ -49,19 +57,33 @@ HWND edit(HWND parent, const std::wstring& text, int x, int y, int w, int h = 24
 HWND checkbox(HWND parent, const std::wstring& text, int x, int y, int w, bool checked) {
     HWND c = CreateWindowExW(0, L"BUTTON", text.c_str(),
                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                             x, y, w, 22, parent, nullptr, nullptr, nullptr);
+                             dpiScale(parent, x), dpiScale(parent, y),
+                             dpiScale(parent, w), dpiScale(parent, 24),
+                             parent, nullptr, nullptr, nullptr);
     SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
     SendMessageW(c, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
     return c;
 }
 
-HWND button(HWND parent, const std::wstring& text, int id, int x, int y, int w, int h = 28) {
+HWND button(HWND parent, const std::wstring& text, int id, int x, int y, int w, int h = 30) {
     HWND b = CreateWindowExW(0, L"BUTTON", text.c_str(),
-                             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, x, y, w, h,
+                             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                             dpiScale(parent, x), dpiScale(parent, y),
+                             dpiScale(parent, w), dpiScale(parent, h),
                              parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                              nullptr, nullptr);
     SendMessageW(b, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
     return b;
+}
+
+HWND comboBox(HWND parent, int x, int y, int w) {
+    HWND c = CreateWindowExW(0, L"COMBOBOX", L"",
+                             WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+                             dpiScale(parent, x), dpiScale(parent, y),
+                             dpiScale(parent, w), dpiScale(parent, 200),
+                             parent, nullptr, nullptr, nullptr);
+    SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
+    return c;
 }
 
 std::wstring textOf(HWND control) {
@@ -110,9 +132,31 @@ HWND makeDialogWindow(AppContext& ctx, const std::wstring& className, const std:
         if (!RegisterClassExW(&wc)) return nullptr;
         registered.push_back(className);
     }
-    return CreateWindowExW(WS_EX_DLGMODALFRAME, className.c_str(), title.c_str(),
-                           WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT,
-                           width, height, ctx.mainWindow, nullptr, ctx.instance, nullptr);
+    // Size is given in design units and scaled here, and the frame is added on top so the
+    // client area really is as large as the layout expects.
+    RECT rc{0, 0, dpiScale(ctx.mainWindow, width), dpiScale(ctx.mainWindow, height)};
+    AdjustWindowRectEx(&rc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+
+    // WS_EX_CONTROLPARENT lets IsDialogMessage walk into the child controls, which is what
+    // makes Tab navigation and the default button work.
+    HWND dialog = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT,
+                                  className.c_str(), title.c_str(),
+                                  WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+                                  CW_USEDEFAULT, CW_USEDEFAULT,
+                                  rc.right - rc.left, rc.bottom - rc.top,
+                                  ctx.mainWindow, nullptr, ctx.instance, nullptr);
+    if (!dialog) return nullptr;
+
+    // Centre on the owner rather than letting the shell cascade it off-screen.
+    RECT owner{};
+    if (GetWindowRect(ctx.mainWindow, &owner)) {
+        const int w = rc.right - rc.left, h = rc.bottom - rc.top;
+        SetWindowPos(dialog, nullptr,
+                     owner.left + ((owner.right - owner.left) - w) / 2,
+                     owner.top + ((owner.bottom - owner.top) - h) / 2,
+                     0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    return dialog;
 }
 
 }  // namespace
@@ -165,12 +209,20 @@ void refreshLog(HWND hwnd) {
     (void)hwnd;
 }
 
+/// The text area fills everything under the button row.
+void layoutLogText(HWND dialog, const RECT& client) {
+    const int pad = dpiScale(dialog, 10);
+    const int barHeight = dpiScale(dialog, 30) + pad * 2;
+    MoveWindow(g_log.text, pad, barHeight, std::max<int>(client.right - pad * 2, 0),
+               std::max<int>(client.bottom - barHeight - pad, 0), TRUE);
+}
+
 LRESULT CALLBACK logProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_SIZE: {
             RECT rc{};
             GetClientRect(hwnd, &rc);
-            MoveWindow(g_log.text, 8, 44, rc.right - 16, rc.bottom - 52, TRUE);
+            layoutLogText(hwnd, rc);
             return 0;
         }
         case WM_COMMAND:
@@ -209,9 +261,9 @@ void showLogWindow(AppContext& ctx) {
     HWND hwnd = makeDialogWindow(ctx, L"TunHubLogWindow", loc::w("Logs"), 1000, 640, logProc);
     if (!hwnd) return;
 
-    g_log.pause = button(hwnd, loc::w("Pause"), IDC_LOG_PAUSE, 8, 8, 110);
-    button(hwnd, loc::w("Copy all"), IDC_LOG_COPY, 124, 8, 130);
-    button(hwnd, loc::w("Close"), IDC_LOG_CLOSE, 260, 8, 110);
+    g_log.pause = button(hwnd, loc::w("Pause"), IDC_LOG_PAUSE, 10, 10, 110);
+    button(hwnd, loc::w("Copy all"), IDC_LOG_COPY, 128, 10, 130);
+    button(hwnd, loc::w("Close"), IDC_LOG_CLOSE, 266, 10, 110);
 
     // A read-only multiline edit is the right control for a log: it handles large text,
     // selection and copy natively, and never re-lays-out per line the way a list would.
@@ -220,9 +272,9 @@ void showLogWindow(AppContext& ctx) {
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY |
             ES_AUTOVSCROLL | ES_AUTOHSCROLL,
         0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
-    HFONT mono = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
-                             FIXED_PITCH | FF_MODERN, L"Consolas");
+    HFONT mono = CreateFontW(-dpiScale(hwnd, 12), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
     SendMessageW(g_log.text, WM_SETFONT, reinterpret_cast<WPARAM>(mono), TRUE);
     SendMessageW(g_log.text, EM_SETLIMITTEXT, 0, 0);   // no 32 KB cap
 
@@ -309,37 +361,29 @@ void showSettingsDialog(AppContext& ctx) {
     g_settings = SettingsState{};
     g_settings.ctx = &ctx;
 
-    HWND hwnd = makeDialogWindow(ctx, L"TunHubSettings", loc::w("Settings"), 540, 400,
+    HWND hwnd = makeDialogWindow(ctx, L"TunHubSettings", loc::w("Settings"), 600, 430,
                                  settingsProc);
     if (!hwnd) return;
 
-    int y = 16;
-    label(hwnd, loc::w("Interface language"), 16, y);
-    g_settings.language = CreateWindowExW(0, L"COMBOBOX", L"",
-                                          WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
-                                          16 + kLabelWidth, y, 200, 200, hwnd, nullptr,
-                                          nullptr, nullptr);
-    SendMessageW(g_settings.language, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
+    int y = 18;
+    label(hwnd, loc::w("Interface language"), 18, y);
+    g_settings.language = comboBox(hwnd, 18 + kLabelWidth, y, 220);
     for (const auto* item : {L"System", L"English", L"Русский"})
         SendMessageW(g_settings.language, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(item));
     const int languageIndex = ctx.settings.language == "en" ? 1
                             : ctx.settings.language == "ru" ? 2 : 0;
     SendMessageW(g_settings.language, CB_SETCURSEL, static_cast<WPARAM>(languageIndex), 0);
-    y += kRowHeight + 8;
+    y += kRowHeight + 10;
 
-    g_settings.launch = checkbox(hwnd, loc::w("Launch TunHub at login"), 16, y, 420,
+    g_settings.launch = checkbox(hwnd, loc::w("Launch TunHub at login"), 18, y, 460,
                                  ctx.settings.launchAtLogin);
     y += kRowHeight;
-    g_settings.killSwitch = checkbox(hwnd, loc::w("Kill switch (global)"), 16, y, 420,
+    g_settings.killSwitch = checkbox(hwnd, loc::w("Kill switch (global)"), 18, y, 460,
                                      ctx.settings.killSwitchGlobal);
-    y += kRowHeight + 12;
+    y += kRowHeight + 14;
 
-    label(hwnd, loc::w("Log capture"), 16, y);
-    g_settings.logMode = CreateWindowExW(0, L"COMBOBOX", L"",
-                                         WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
-                                         16 + kLabelWidth, y, 200, 200, hwnd, nullptr,
-                                         nullptr, nullptr);
-    SendMessageW(g_settings.logMode, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
+    label(hwnd, loc::w("Log capture"), 18, y);
+    g_settings.logMode = comboBox(hwnd, 18 + kLabelWidth, y, 220);
     SendMessageW(g_settings.logMode, CB_ADDSTRING, 0,
                  reinterpret_cast<LPARAM>(loc::w("Normal").c_str()));
     SendMessageW(g_settings.logMode, CB_ADDSTRING, 0,
@@ -347,18 +391,19 @@ void showSettingsDialog(AppContext& ctx) {
     const auto currentMode = log_settings::read();
     SendMessageW(g_settings.logMode, CB_SETCURSEL,
                  currentMode == LogCaptureMode::Verbose ? 1 : 0, 0);
-    y += kRowHeight + 4;
+    y += kRowHeight + 6;
 
     HWND hint = CreateWindowExW(
         0, L"STATIC",
         loc::w("Verbose records every command and the tunnel core's debug output. Use it for "
                "troubleshooting only — it produces a lot of data and uses noticeably more CPU. "
                "Logs are kept in a single file, trimmed to the last 5 MB.").c_str(),
-        WS_CHILD | WS_VISIBLE | SS_LEFT, 16, y, 500, 70, hwnd, nullptr, nullptr, nullptr);
-    SendMessageW(hint, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
+        WS_CHILD | WS_VISIBLE | SS_LEFT, dpiScale(hwnd, 18), dpiScale(hwnd, y),
+        dpiScale(hwnd, 560), dpiScale(hwnd, 90), hwnd, nullptr, nullptr, nullptr);
+    SendMessageW(hint, WM_SETFONT, reinterpret_cast<WPARAM>(smallFont()), TRUE);
 
-    button(hwnd, loc::w("OK"), IDC_SET_OK, 300, 320, 100);
-    button(hwnd, loc::w("Cancel"), IDC_SET_CANCEL, 410, 320, 100);
+    button(hwnd, loc::w("OK"), IDC_SET_OK, 360, 348, 110);
+    button(hwnd, loc::w("Cancel"), IDC_SET_CANCEL, 478, 348, 110);
 
     runModal(hwnd, g_settings.done);
     if (!g_settings.save) return;
@@ -531,36 +576,39 @@ bool promptCredentials(AppContext& ctx, const TunnelConfig& config, std::string&
     g_creds = CredentialState{};
     const bool needsOtp = config.openVpn && config.openVpn->staticChallenge;
 
-    HWND hwnd = makeDialogWindow(ctx, L"TunHubCredentials", loc::w("Sign in"), 460,
+    constexpr int kX = 18;
+    const int fieldX = kX + kLabelWidth;
+
+    HWND hwnd = makeDialogWindow(ctx, L"TunHubCredentials", loc::w("Sign in"), 520,
                                  needsOtp ? 300 : 250, credentialProc);
     if (!hwnd) return false;
 
     int y = 16;
-    label(hwnd, str::widen(config.name), 16, y, 400);
+    label(hwnd, str::widen(config.name), kX, y, 460);
     y += kRowHeight;
 
-    label(hwnd, loc::w("Username"), 16, y);
-    g_creds.username = edit(hwnd, str::widen(username), 16 + kLabelWidth, y, 260);
+    label(hwnd, loc::w("Username"), kX, y);
+    g_creds.username = edit(hwnd, str::widen(username), fieldX, y, 300);
     y += kRowHeight + 4;
 
-    label(hwnd, loc::w("Password"), 16, y);
-    g_creds.password = edit(hwnd, str::widen(password), 16 + kLabelWidth, y, 260, 24, ES_PASSWORD);
+    label(hwnd, loc::w("Password"), kX, y);
+    g_creds.password = edit(hwnd, str::widen(password), fieldX, y, 300, kEditHeight, ES_PASSWORD);
     y += kRowHeight + 4;
 
     if (needsOtp) {
         const auto prompt = config.openVpn->staticChallengeText.empty()
                                 ? loc::t("One-time code")
                                 : config.openVpn->staticChallengeText;
-        label(hwnd, str::widen(prompt), 16, y);
-        g_creds.otp = edit(hwnd, L"", 16 + kLabelWidth, y, 160);
+        label(hwnd, str::widen(prompt), kX, y);
+        g_creds.otp = edit(hwnd, L"", fieldX, y, 170);
         y += kRowHeight + 4;
     }
 
-    g_creds.save = checkbox(hwnd, loc::w("Save login and password"), 16, y, 380, save);
-    y += kRowHeight + 12;
+    g_creds.save = checkbox(hwnd, loc::w("Save login and password"), kX, y, 440, save);
+    y += kRowHeight + 14;
 
-    button(hwnd, loc::w("Connect"), IDC_CRED_OK, 220, y, 100);
-    button(hwnd, loc::w("Cancel"), IDC_CRED_CANCEL, 330, y, 100);
+    button(hwnd, loc::w("Connect"), IDC_CRED_OK, 262, y, 110);
+    button(hwnd, loc::w("Cancel"), IDC_CRED_CANCEL, 380, y, 110);
 
     SetFocus(g_creds.username);
     runModal(hwnd, g_creds.done);
@@ -700,110 +748,119 @@ void showEditorDialog(AppContext& ctx, const std::string& tunnelId) {
     // dereferenced below.
     const bool isOpenVpn = g_editor.config.kind == TunnelKind::OpenVpn &&
                            g_editor.config.openVpn.has_value();
-    HWND hwnd = makeDialogWindow(ctx, L"TunHubEditor", str::widen(existing->name), 640,
-                                 isOpenVpn ? 380 : 760, editorProc);
+    // Design units; the frame and DPI are added by makeDialogWindow.
+    constexpr int kX = 18;                       // left margin
+    const int fieldX = kX + kLabelWidth;
+    constexpr int kFieldWidth = 430;
+
+    HWND hwnd = makeDialogWindow(ctx, L"TunHubEditor", str::widen(existing->name), 660,
+                                 isOpenVpn ? 330 : 790, editorProc);
     if (!hwnd) return;
 
-    int y = 14;
-    label(hwnd, loc::w("Name"), 16, y);
-    g_editor.name = edit(hwnd, str::widen(g_editor.config.name), 16 + kLabelWidth, y, 420);
-    y += kRowHeight + 6;
+    int y = 16;
+    label(hwnd, loc::w("Name"), kX, y);
+    g_editor.name = edit(hwnd, str::widen(g_editor.config.name), fieldX, y, kFieldWidth);
+    y += kRowHeight + 8;
 
     if (isOpenVpn) {
-        label(hwnd, loc::w("Endpoint"), 16, y);
+        label(hwnd, loc::w("Endpoint"), kX, y);
         HWND remote = edit(hwnd, str::widen(g_editor.config.openVpn->remoteSummary),
-                           16 + kLabelWidth, y, 420);
+                           fieldX, y, kFieldWidth);
         SendMessageW(remote, EM_SETREADONLY, TRUE, 0);
-        y += kRowHeight + 6;
+        y += kRowHeight + 8;
 
-        label(hwnd, loc::w("Username"), 16, y);
-        g_editor.ovpnUser = edit(hwnd, str::widen(secrets.openVpnUsername), 16 + kLabelWidth, y, 260);
+        label(hwnd, loc::w("Username"), kX, y);
+        g_editor.ovpnUser = edit(hwnd, str::widen(secrets.openVpnUsername), fieldX, y, 280);
         y += kRowHeight + 4;
-        label(hwnd, loc::w("Password"), 16, y);
+        label(hwnd, loc::w("Password"), kX, y);
         g_editor.ovpnPassword = edit(hwnd, str::widen(secrets.openVpnPassword),
-                                     16 + kLabelWidth, y, 260, 24, ES_PASSWORD);
-        y += kRowHeight + 10;
+                                     fieldX, y, 280, kEditHeight, ES_PASSWORD);
+        y += kRowHeight + 12;
     } else {
-        label(hwnd, loc::w("Private key"), 16, y);
-        g_editor.privateKey = edit(hwnd, str::widen(secrets.privateKey), 16 + kLabelWidth, y, 320,
-                                   24, ES_PASSWORD);
-        button(hwnd, L"⟳", IDC_ED_GENKEY, 16 + kLabelWidth + 328, y, 40, 26);
+        label(hwnd, loc::w("Private key"), kX, y);
+        g_editor.privateKey = edit(hwnd, str::widen(secrets.privateKey), fieldX, y, 380,
+                                   kEditHeight, ES_PASSWORD);
+        button(hwnd, L"⟳", IDC_ED_GENKEY, fieldX + 388, y, 42, kEditHeight);
         y += kRowHeight + 4;
 
-        label(hwnd, loc::w("Public key"), 16, y);
+        label(hwnd, loc::w("Public key"), kX, y);
         g_editor.publicKey = edit(hwnd, str::widen(g_editor.config.iface.publicKey),
-                                  16 + kLabelWidth, y, 420);
+                                  fieldX, y, kFieldWidth);
         SendMessageW(g_editor.publicKey, EM_SETREADONLY, TRUE, 0);
         y += kRowHeight + 4;
 
-        label(hwnd, loc::w("Addresses"), 16, y);
+        label(hwnd, loc::w("Addresses"), kX, y);
         g_editor.addresses = edit(hwnd, str::widen(joinRanges(g_editor.config.iface.addresses)),
-                                  16 + kLabelWidth, y, 420);
+                                  fieldX, y, kFieldWidth);
         y += kRowHeight + 4;
 
-        label(hwnd, loc::w("DNS"), 16, y);
+        label(hwnd, loc::w("DNS"), kX, y);
         g_editor.dns = edit(hwnd, str::widen(str::join(g_editor.config.iface.dns, ", ")),
-                            16 + kLabelWidth, y, 420);
+                            fieldX, y, kFieldWidth);
         y += kRowHeight + 4;
 
-        label(hwnd, loc::w("MTU"), 16, y);
+        label(hwnd, loc::w("MTU"), kX, y);
         g_editor.mtu = edit(hwnd,
                             g_editor.config.iface.mtu
                                 ? std::to_wstring(*g_editor.config.iface.mtu) : L"",
-                            16 + kLabelWidth, y, 100);
-        label(hwnd, loc::w("Listen port"), 16 + kLabelWidth + 120, y, 110);
+                            fieldX, y, 100);
+        label(hwnd, loc::w("Listen port"), fieldX + 116, y, 110);
         g_editor.listenPort = edit(hwnd,
                                    g_editor.config.iface.listenPort
                                        ? std::to_wstring(*g_editor.config.iface.listenPort) : L"",
-                                   16 + kLabelWidth + 236, y, 100);
-        y += kRowHeight + 10;
+                                   fieldX + 230, y, 100);
+        y += kRowHeight + 12;
 
-        label(hwnd, loc::w("Peers"), 16, y, 300);
-        y += 24;
+        label(hwnd, loc::w("Peers"), kX, y, 320);
+        y += 26;
         const PeerConfig firstPeer =
             g_editor.config.peers.empty() ? PeerConfig{} : g_editor.config.peers.front();
 
-        label(hwnd, loc::w("Public key"), 16, y);
-        g_editor.peerPublicKey = edit(hwnd, str::widen(firstPeer.publicKey), 16 + kLabelWidth, y, 420);
+        label(hwnd, loc::w("Public key"), kX, y);
+        g_editor.peerPublicKey = edit(hwnd, str::widen(firstPeer.publicKey), fieldX, y, kFieldWidth);
         y += kRowHeight + 4;
 
-        label(hwnd, loc::w("Endpoint"), 16, y);
+        label(hwnd, loc::w("Endpoint"), kX, y);
         g_editor.endpoint = edit(hwnd, str::widen(firstPeer.endpoint.value_or("")),
-                                 16 + kLabelWidth, y, 420);
+                                 fieldX, y, kFieldWidth);
         y += kRowHeight + 4;
 
-        label(hwnd, loc::w("Allowed IPs"), 16, y);
+        label(hwnd, loc::w("Allowed IPs"), kX, y);
         g_editor.allowedIPs = edit(hwnd, str::widen(joinRanges(firstPeer.allowedIPs)),
-                                   16 + kLabelWidth, y, 420);
+                                   fieldX, y, kFieldWidth);
         y += kRowHeight + 4;
 
-        label(hwnd, loc::w("Keepalive"), 16, y);
+        label(hwnd, loc::w("Keepalive"), kX, y);
         g_editor.keepalive = edit(hwnd,
                                   firstPeer.persistentKeepalive
                                       ? std::to_wstring(*firstPeer.persistentKeepalive) : L"",
-                                  16 + kLabelWidth, y, 100);
-        y += kRowHeight + 10;
+                                  fieldX, y, 100);
+        y += kRowHeight + 12;
 
-        label(hwnd, loc::w("Obfuscation (AmneziaWG)"), 16, y, 300);
-        y += 24;
+        label(hwnd, loc::w("Obfuscation (AmneziaWG)"), 18, y, 320);
+        y += 26;
+        // Free-form "Key = value" text so every AWG parameter (including I1–I5) is reachable
+        // without a field per parameter.
         g_editor.awg = CreateWindowExW(
             WS_EX_CLIENTEDGE, L"EDIT",
             str::widen(g_editor.config.awg ? awgToText(*g_editor.config.awg) : "").c_str(),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL,
-            16, y, 560, 150, hwnd, nullptr, nullptr, nullptr);
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL |
+                ES_WANTRETURN,
+            dpiScale(hwnd, 18), dpiScale(hwnd, y), dpiScale(hwnd, 600), dpiScale(hwnd, 150),
+            hwnd, nullptr, nullptr, nullptr);
         SendMessageW(g_editor.awg, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
-        y += 160;
+        y += 162;
     }
 
     g_editor.killSwitch = checkbox(hwnd, loc::w("Kill switch (block traffic outside the tunnel)"),
-                                   16, y, 500, g_editor.config.options.killSwitch);
+                                   kX, y, 560, g_editor.config.options.killSwitch);
     y += kRowHeight;
-    g_editor.autoConnect = checkbox(hwnd, loc::w("Connect on app launch"), 16, y, 500,
+    g_editor.autoConnect = checkbox(hwnd, loc::w("Connect on app launch"), kX, y, 560,
                                     g_editor.config.options.autoConnectOnLaunch);
-    y += kRowHeight + 10;
+    y += kRowHeight + 12;
 
-    button(hwnd, loc::w("Save"), IDC_ED_OK, 390, y, 100);
-    button(hwnd, loc::w("Cancel"), IDC_ED_CANCEL, 500, y, 100);
+    button(hwnd, loc::w("Save"), IDC_ED_OK, 400, y, 110);
+    button(hwnd, loc::w("Cancel"), IDC_ED_CANCEL, 518, y, 110);
 
     runModal(hwnd, g_editor.done);
     if (!g_editor.save) return;
