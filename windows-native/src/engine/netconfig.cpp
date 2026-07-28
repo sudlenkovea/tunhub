@@ -57,7 +57,15 @@ Gateway NetConfig::physicalGateway(bool v6) {
         if (!isPhysicalIfType(ifRow.Type)) continue;                 // skip VPN adapters
         if (ifRow.OperStatus != IfOperStatusUp) continue;
 
-        const unsigned long metric = row.Metric + ifRow.Metric;
+        // Windows ranks routes by route metric + INTERFACE metric, and the interface metric
+        // lives on MIB_IPINTERFACE_ROW rather than on the adapter row.
+        MIB_IPINTERFACE_ROW ipInterface{};
+        ipInterface.Family = static_cast<ADDRESS_FAMILY>(v6 ? AF_INET6 : AF_INET);
+        ipInterface.InterfaceLuid = row.InterfaceLuid;
+        ULONG interfaceMetric = 0;
+        if (GetIpInterfaceEntry(&ipInterface) == NO_ERROR) interfaceMetric = ipInterface.Metric;
+
+        const unsigned long metric = row.Metric + interfaceMetric;
         if (metric >= bestMetric) continue;
 
         bestMetric = metric;
