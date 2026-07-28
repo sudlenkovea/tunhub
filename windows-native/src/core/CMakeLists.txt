@@ -2,6 +2,7 @@
 # unit-tested on its own.
 add_library(tunhub_core STATIC
   str.cpp
+  util.cpp
   json.cpp
   ipaddr.cpp
   wgkey.cpp
@@ -12,4 +13,4 @@ add_library(tunhub_core STATIC
 )
 
 target_include_directories(tunhub_core PUBLIC include)
-target_link_libraries(tunhub_core PUBLIC Ws2_32 bcrypt)
+target_link_libraries(tunhub_core PUBLIC Ws2_32 bcrypt ole32)

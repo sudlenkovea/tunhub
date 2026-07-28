@@ -142,6 +142,40 @@ bool isIpLiteral(const std::string& text) {
     return normalise(str::trim(text), v6, norm, raw);
 }
 
+std::optional<Endpoint> parseEndpoint(const std::string& text) {
+    auto t = str::trim(text);
+    if (t.empty()) return std::nullopt;
+
+    std::string host;
+    std::string portText;
+    if (t.front() == '[') {                       // [fd00::1]:51820
+        auto close = t.find(']');
+        if (close == std::string::npos || close + 2 > t.size() || t[close + 1] != ':')
+            return std::nullopt;
+        host = t.substr(1, close - 1);
+        portText = t.substr(close + 2);
+    } else {
+        auto colon = t.rfind(':');
+        // A bare IPv6 literal has several colons and no port — reject it: an endpoint needs one.
+        if (colon == std::string::npos || t.find(':') != colon) return std::nullopt;
+        host = t.substr(0, colon);
+        portText = t.substr(colon + 1);
+    }
+    if (host.empty() || portText.empty()) return std::nullopt;
+
+    unsigned long port = 0;
+    try {
+        size_t consumed = 0;
+        port = std::stoul(portText, &consumed);
+        if (consumed != portText.size()) return std::nullopt;
+    } catch (...) {
+        return std::nullopt;
+    }
+    if (port == 0 || port > 65535) return std::nullopt;
+
+    return Endpoint{host, static_cast<uint16_t>(port)};
+}
+
 std::vector<IpAddressRange> parseRangeList(const std::string& commaSeparated) {
     std::vector<IpAddressRange> out;
     for (const auto& piece : str::splitList(commaSeparated))

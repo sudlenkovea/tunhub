@@ -100,8 +100,8 @@ struct TunnelMeta {
     int sortOrder = 0;
 };
 
-/// OpenVPN profile: the .ovpn text is kept verbatim so the core sees exactly what the
-/// provider shipped; only credentials live in the credential store.
+/// OpenVPN profile. The sanitised .ovpn text is kept verbatim (inline certs included) so the
+/// core sees what the provider shipped; only credentials live in the credential store.
 struct OpenVpnProfile {
     std::string configText;
     bool authUserPass = false;
@@ -109,6 +109,11 @@ struct OpenVpnProfile {
     std::string staticChallengeText;
     std::optional<SecretRef> credentialsRef;
     std::string remoteSummary;             // "host:port/proto" for the UI
+    std::vector<std::string> dns;          // from `dhcp-option DNS`
+    std::vector<std::string> searchDomains;
+    /// `redirect-gateway` ⇒ full tunnel; drives kill-switch and DNS decisions the same way
+    /// a 0.0.0.0/0 AllowedIPs does for WireGuard.
+    bool redirectGateway = false;
 };
 
 struct TunnelConfig {

@@ -38,6 +38,14 @@ struct IpAddressRange {
 /// Is `text` a valid IPv4/IPv6 literal (no prefix)?
 bool isIpLiteral(const std::string& text);
 
+struct Endpoint {
+    std::string host;      // hostname or IP literal (IPv6 without the surrounding brackets)
+    uint16_t port = 0;
+};
+
+/// Parse "host:port", "1.2.3.4:51820" or "[fd00::1]:51820".
+std::optional<Endpoint> parseEndpoint(const std::string& text);
+
 std::vector<IpAddressRange> parseRangeList(const std::string& commaSeparated);
 std::string joinRanges(const std::vector<IpAddressRange>& ranges);
 
