@@ -1,5 +1,6 @@
 #include "tunhub/json.h"
 
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>

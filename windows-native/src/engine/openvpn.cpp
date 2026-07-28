@@ -3,6 +3,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include <cstdlib>   // strtoull
 #include <filesystem>
 #include <fstream>
 #include <random>

@@ -20,4 +20,9 @@ std::string formatDateTime(int64_t unixSeconds);
 /// "3m 12s" style uptime for the tunnel list.
 std::string formatDuration(int64_t seconds);
 
+/// Initialise Winsock once per process. Required before ANY ws2_32 call — including
+/// inet_pton/inet_ntop, which the CIDR parsing uses, so both the service and the GUI need it.
+/// Safe to call more than once.
+void initSockets();
+
 }  // namespace tunhub::util

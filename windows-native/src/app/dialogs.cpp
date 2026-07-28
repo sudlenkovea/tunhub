@@ -3,6 +3,7 @@
 // Dialogs are built in code rather than from .rc templates: the layouts are simple, and this
 // keeps the strings in one place for localisation instead of splitting them across resources.
 
+#include <windows.h>    // must come before any other Windows header
 #include <commctrl.h>
 #include <commdlg.h>
 
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "tunhub/conflicts.h"
+#include "tunhub/log.h"      // LogLine, LogCaptureMode, log_settings
 #include "tunhub/ovpn.h"
 #include "tunhub/paths.h"
 #include "tunhub/str.h"
@@ -694,7 +696,10 @@ void showEditorDialog(AppContext& ctx, const std::string& tunnelId) {
     g_editor.config = *existing;
     auto secrets = ctx.store.loadSecrets(tunnelId).value_or(TunnelSecrets{});
 
-    const bool isOpenVpn = g_editor.config.kind == TunnelKind::OpenVpn;
+    // Require the profile too: a config of OpenVPN kind without one would otherwise be
+    // dereferenced below.
+    const bool isOpenVpn = g_editor.config.kind == TunnelKind::OpenVpn &&
+                           g_editor.config.openVpn.has_value();
     HWND hwnd = makeDialogWindow(ctx, L"TunHubEditor", str::widen(existing->name), 640,
                                  isOpenVpn ? 380 : 760, editorProc);
     if (!hwnd) return;

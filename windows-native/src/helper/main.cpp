@@ -5,8 +5,10 @@
 //   tunhub-helper.exe --install  register the service
 //   tunhub-helper.exe --uninstall
 
+#include <winsock2.h>
 #include <windows.h>
 
+#include <cstdio>    // wprintf
 #include <memory>
 #include <string>
 
@@ -15,6 +17,7 @@
 #include "tunhub/log.h"
 #include "tunhub/paths.h"
 #include "tunhub/str.h"
+#include "tunhub/util.h"
 
 using namespace tunhub;
 
@@ -46,6 +49,7 @@ void WINAPI serviceCtrlHandler(DWORD control) {
 
 /// Shared startup for both the service and --console.
 bool startEngine() {
+    util::initSockets();   // endpoint resolution and the OpenVPN management socket need it
     paths::ensureDirectories();
     const auto mode = log_settings::read();
     g_log = std::make_unique<FileLog>(paths::helperLogFile());

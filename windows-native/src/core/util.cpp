@@ -1,9 +1,12 @@
 #include "tunhub/util.h"
 
+#include <winsock2.h>   // must precede windows.h
 #include <windows.h>
+#include <objbase.h>    // CoCreateGuid — excluded from windows.h by WIN32_LEAN_AND_MEAN
 
 #include <cstdio>
 #include <ctime>
+#include <mutex>
 
 namespace tunhub::util {
 
@@ -41,6 +44,16 @@ std::string formatDateTime(int64_t unixSeconds) {
                   tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
                   tm.tm_hour, tm.tm_min, tm.tm_sec);
     return buf;
+}
+
+void initSockets() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        WSADATA data{};
+        WSAStartup(MAKEWORD(2, 2), &data);
+        // Deliberately never WSACleanup: the matching teardown would have to outlive every
+        // socket in the process, and the OS reclaims this at exit anyway.
+    });
 }
 
 std::string formatDuration(int64_t seconds) {

@@ -1,9 +1,12 @@
 // Main window: tunnel list, details pane with a traffic strip, toolbar and tray icon.
 
+#include <windows.h>    // must come before any other Windows header
 #include <commctrl.h>
 #include <shellapi.h>
 
 #include <algorithm>
+#include <cwchar>     // wcscpy_s
+#include <iterator>   // std::next
 
 #include "tunhub/constants.h"
 #include "tunhub/str.h"
@@ -459,7 +462,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_state.helperBar = CreateWindowExW(
                 0, L"STATIC", loc::w("TunHub needs a background service to manage tunnels.").c_str(),
                 WS_CHILD | SS_LEFT, 0, 0, 0, 0, hwnd,
-                reinterpret_cast<HMENU>(IDC_HELPERBAR), nullptr, nullptr);
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_HELPERBAR)), nullptr, nullptr);
             SendMessageW(g_state.helperBar, WM_SETFONT,
                          reinterpret_cast<WPARAM>(uiFont()), TRUE);
             g_state.helperButton = makeButton(hwnd, IDC_HELPERBTN,
@@ -478,21 +481,21 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT |
                                                LVS_SINGLESEL | LVS_SHOWSELALWAYS,
                                            0, 0, 0, 0, hwnd,
-                                           reinterpret_cast<HMENU>(IDC_LIST), nullptr, nullptr);
+                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIST)), nullptr, nullptr);
             SendMessageW(g_state.list, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
             setupList(g_state.list);
 
             g_state.details = CreateWindowExW(
                 WS_EX_CLIENTEDGE, L"EDIT", L"",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY, 0, 0, 0, 0,
-                hwnd, reinterpret_cast<HMENU>(IDC_DETAILS), nullptr, nullptr);
+                hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_DETAILS)), nullptr, nullptr);
             SendMessageW(g_state.details, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
 
             // Plain static: the subclass below does the painting, so no owner-draw plumbing
             // through the parent is needed.
             g_state.graph = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
                                             0, 0, 0, 0, hwnd,
-                                            reinterpret_cast<HMENU>(IDC_GRAPH), nullptr, nullptr);
+                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_GRAPH)), nullptr, nullptr);
 
             g_state.iconIdle = makeStatusIcon(false);
             g_state.iconActive = makeStatusIcon(true);

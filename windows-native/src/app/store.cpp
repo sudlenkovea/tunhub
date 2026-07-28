@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <dpapi.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 

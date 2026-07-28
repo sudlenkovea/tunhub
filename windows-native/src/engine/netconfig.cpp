@@ -6,6 +6,7 @@
 #include <netioapi.h>
 
 #include <algorithm>
+#include <climits>   // ULONG_MAX
 
 #include "tunhub/proc.h"
 #include "tunhub/str.h"

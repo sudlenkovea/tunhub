@@ -2,7 +2,7 @@
 
 #include <windows.h>
 
-#include <charconv>
+#include <cstdlib>   // strtoull / strtoll
 
 #include "tunhub/str.h"
 #include "tunhub/wgkey.h"

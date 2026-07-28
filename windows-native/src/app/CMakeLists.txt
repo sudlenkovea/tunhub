@@ -11,6 +11,7 @@ add_executable(TunHub WIN32
 target_link_libraries(TunHub PRIVATE tunhub_engine comctl32 comdlg32 shell32 crypt32)
 set_target_properties(TunHub PROPERTIES OUTPUT_NAME "TunHub")
 
-# The .rc references the icon relative to its own directory.
-set_source_files_properties(app.rc PROPERTIES
-  VS_SETTINGS "AdditionalIncludeDirectories=${CMAKE_CURRENT_SOURCE_DIR}")
+# The .rc references app.manifest and TunHub.ico by bare name; the resource compiler resolves
+# those against its include path, not against the .rc file's directory.
+set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /I\"${CMAKE_CURRENT_SOURCE_DIR}\"" PARENT_SCOPE)
+set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /I\"${CMAKE_CURRENT_SOURCE_DIR}\"")

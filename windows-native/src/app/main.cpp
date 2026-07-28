@@ -1,10 +1,12 @@
 // TunHub for Windows — entry point and the actions the windows share.
 
+#include <windows.h>    // must come before any other Windows header
 #include <shellapi.h>
 
 #include "tunhub/conflicts.h"
 #include "tunhub/paths.h"
 #include "tunhub/str.h"
+#include "tunhub/util.h"
 #include "ui.h"
 
 namespace tunhub::app {
@@ -131,6 +133,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
         return 0;
     }
 
+    // inet_pton/inet_ntop back the CIDR parsing used throughout the editor and list.
+    util::initSockets();
     paths::ensureDirectories();
 
     AppContext ctx;
