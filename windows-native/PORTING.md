@@ -27,35 +27,35 @@ openvpn + OpenSSL), which are a fixed cost under any UI technology.
 - **Config format is unchanged**, so `%ProgramData%\TunHub` configs stay compatible with the
   previous build and with the macOS app.
 
+## Layout
+
+```
+src/core/     models, JSON, CIDR, keys, wg-quick + .ovpn parsers, conflict checker
+src/engine/   log, paths, process spawn, UAPI, routing/DNS/firewall, OpenVPN, supervisor, IPC
+src/helper/   the LocalSystem Windows service
+src/app/      the Win32 GUI
+installer/    WiX v5 MSI
+build.ps1     compile → stage → fetch cores → MSI
+```
+
+`core` has no Windows-UI dependencies, so it can be unit-tested on its own. `engine` is
+linked by both the service and the app (the app only uses the IPC client half).
+
 ## Status
 
-Done:
+All stages are in place: core, engine, service, GUI, packaging and the CI job. The `windows/`
+.NET tree has been removed — it is fully superseded and remains in git history.
 
-- `CMakeLists.txt` — MSVC toolchain, static CRT, LTCG/OPT:REF/ICF for size, warnings at `/W4`.
-- `core/str` — UTF-8 ↔ UTF-16, trimming/splitting, base64, hex, human-readable sizes.
-- `core/json` — dependency-free JSON DOM. Sorted keys when pretty-printing so config diffs
-  stay stable; compact output for IPC.
-- `core/ipaddr` — CIDR parsing/normalisation via the system resolver, masking,
-  `contains`/`overlaps` (needed by the conflict checker and route logic).
-- `core/wgkey` — base64 ↔ hex for UAPI, plus vendored X25519 for keypair generation and
-  public-key derivation. CSPRNG via BCrypt.
-- `core/models.h` — full model layer including AmneziaWG H1–H4 / S3 / S4 / I1–I5, split-DNS
-  semantics and the resolved-spec/runtime-state contracts.
-
-Next, in order:
-
-1. `core/models.cpp`, `wgquick_parser.cpp`, `ovpn_parser.cpp`, `conflict_checker.cpp`
-   (+ unit tests mirroring the existing 24 C# tests).
-2. `engine/` — UAPI client over the AmneziaWG/WireGuard named pipes, tunnel supervisor with
-   the stats loop and startup orphan reaping, routes/NRPT DNS/firewall kill switch, OpenVPN
-   management-interface client, bounded `FileLog`.
-3. `helper/` — LocalSystem service, named-pipe IPC with a security descriptor.
-4. `app/` — tray, tunnel list, WG/AWG and OpenVPN editors, live log window, settings,
-   import, traffic graph.
-5. Packaging (WiX MSI) + CI job, then retire `windows/` (.NET).
+Feature parity with the previous build: tunnel list with live status and traffic, start/stop,
+tray icon (status colour, tunnel list, stop-all only when something runs), WG/AWG editor
+including the full AWG parameter set, OpenVPN editor with credential prompt and static
+challenge, import of `.conf`/`.ovpn` with warnings, conflict checker, live log viewer with
+pause/copy, settings (language, launch at login, kill switch, log capture with restart), and
+the traffic strip.
 
 ## Note on verification
 
-This code is written on macOS and cannot be compiled here — it needs MSVC. The CI job on
-`windows-2022` is what will first compile it, so expect an initial round of compiler fixes
-before the tree builds clean.
+This tree was written on macOS and cannot be compiled there — it needs MSVC. The CI job on
+`windows-2022` is what compiles it first, so expect an initial round of compiler fixes before
+it builds clean. The build also reports the staged payload size per file, which is the number
+this rewrite exists to reduce.

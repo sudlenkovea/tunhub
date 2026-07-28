@@ -1,31 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- TunHub for Windows — MSI package (WiX v5). Build on Windows only:
-       wix build installer\TunHub.wxs -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext ^
-                 -d DistDir=dist\TunHub -o dist\TunHub-0.8.1.msi
-     DistDir is the publish output from build.ps1 (WinUI app + helper + bundled cores). -->
+<!-- MSI for the native build. DistDir is the staged output of build.ps1. -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <Package Name="TunHub"
            Manufacturer="TunHub"
-           Version="0.8.1.0"
+           Version="$(var.Version)"
            UpgradeCode="7E3B9A54-0C2F-4E7A-9C1B-9B0F0A2D6E11"
            Scope="perMachine"
            Compressed="yes">
 
-    <!-- In-place upgrade: remove the old version early (so running files aren't locked), and
-         allow re-installing the same version (handy for dev rebuilds). -->
+    <!-- Remove the old version early so running files aren't locked, and allow reinstalling
+         the same version (handy while developing). -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
                   Schedule="afterInstallInitialize"
                   DowngradeErrorMessage="A newer version of TunHub is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <Icon Id="TunHubIcon" SourceFile="$(var.DistDir)\Assets\TunHub.ico" />
+    <Icon Id="TunHubIcon" SourceFile="$(var.DistDir)\TunHub.ico" />
     <Property Id="ARPPRODUCTICON" Value="TunHubIcon" />
 
-    <!-- Close a running TunHub before install/upgrade so its files aren't in use. The tray keeps
-         the process alive after the window is closed, so terminate it if it doesn't exit. -->
+    <!-- The tray keeps the app alive after its window is closed, so ask it to exit first. -->
     <util:CloseApplication Id="CloseTunHub"
                            Target="TunHub.exe"
                            CloseMessage="yes"
@@ -33,7 +29,6 @@
                            RebootPrompt="no"
                            Description="TunHub is running. Setup will close it to continue." />
 
-    <!-- Installer UI with a folder-selection page. -->
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
     <WixVariable Id="WixUILicenseRtf" Value="installer\license.rtf" />
 
@@ -44,9 +39,9 @@
       <Directory Id="AppShortcutFolder" Name="TunHub" />
     </StandardDirectory>
 
-    <!-- Harvest the publish output. The two exes are declared explicitly (below) so they're
-         guaranteed to ship — the helper as a service, TunHub.exe as the app entry point. -->
     <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <!-- Everything staged, except the two executables that are declared explicitly below
+           so they are guaranteed to ship and can carry their own install logic. -->
       <Files Include="$(var.DistDir)\**">
         <Exclude Files="$(var.DistDir)\tunhub-helper.exe" />
         <Exclude Files="$(var.DistDir)\TunHub.exe" />
@@ -58,7 +53,7 @@
 
       <Component Id="HelperService" Guid="8A1D2C33-5F44-4B66-8E77-1A2B3C4D5E6F">
         <File Id="HelperExe" Source="$(var.DistDir)\tunhub-helper.exe" KeyPath="yes" />
-        <!-- Privileged background service (LocalSystem) — macOS root LaunchDaemon equivalent. -->
+        <!-- Privileged background service — the macOS root LaunchDaemon equivalent. -->
         <ServiceInstall Id="TunHubHelperInstall"
                         Name="TunHubHelper"
                         DisplayName="TunHub Helper"
@@ -84,7 +79,8 @@
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="TunHubIcon" />
         <RemoveFolder Id="RemoveAppShortcutFolder" On="uninstall" />
-        <RegistryValue Root="HKCU" Key="Software\TunHub" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\TunHub" Name="installed" Type="integer"
+                       Value="1" KeyPath="yes" />
       </Component>
     </ComponentGroup>
 

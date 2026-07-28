@@ -117,7 +117,7 @@ OpenVPN OTP dialog, tray icon, launch-at-login) and ships as an MSI that registe
 
 ```powershell
 cd windows
-powershell -ExecutionPolicy Bypass -File .\build.ps1   # → dist\TunHub-0.8.1-win-x64.msi
+powershell -ExecutionPolicy Bypass -File .\build.ps1   # → dist\TunHub-0.9.0-x64.msi
 ```
 
 See [`windows/README.md`](windows/README.md) for details. The shared `TunHub.Core` /

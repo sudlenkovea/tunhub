@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(TunHub VERSION 0.8.2 LANGUAGES CXX)
+project(TunHub VERSION 0.9.0 LANGUAGES CXX)
 
 # Native Win32 build: no .NET, no WindowsAppSDK. The previous WinUI 3 build shipped two
 # self-contained .NET runtimes plus the WindowsAppSDK native libraries (~175 MB of the
