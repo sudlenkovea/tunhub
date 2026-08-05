@@ -236,6 +236,11 @@ struct TunnelDetailView: View {
 struct OverviewView: View {
     @EnvironmentObject var state: AppState
     let config: TunnelConfig
+    /// Bumped on a local timer so the chart + rate labels re-read `state.history` (which is
+    /// no longer @Published) without forcing the whole app to re-diff twice a second. While
+    /// the tunnel is idle (phase == .stopped), the timer stops entirely.
+    @State private var chartTick = 0
+    @State private var chartTimer: Timer?
 
     var rt: TunnelRuntimeState? { state.runtime[config.id] }
 
@@ -315,8 +320,13 @@ struct OverviewView: View {
                 RoutesBox(config: config)
 
                 GroupBox("Speed (10 min)") {
+                    // The `.id(chartTick)` is what makes this re-render on the local timer:
+                    // state.history is no longer @Published (it churned the whole UI every
+                    // poll tick), so we drive the chart from a per-view timer that only runs
+                    // while a tunnel is active and this overview is on screen.
                     SpeedChart(samples: Array((state.history[config.id] ?? []).suffix(300)))
                         .frame(height: 160)
+                        .id(chartTick)
                 }
 
                 if let peers = rt?.peers, !peers.isEmpty {
@@ -351,6 +361,29 @@ struct OverviewView: View {
             }
             .padding(.vertical, 6)
         }
+        .onAppear(perform: startChartTimer)
+        .onDisappear(perform: stopChartTimer)
+    }
+
+    /// Drive the speed chart from a local timer that only runs while a tunnel is active.
+    /// This replaces the previous "history is @Published, so the whole tree re-diffs on
+    /// every poll tick" model — that worked but invalidated the sidebar, popover and every
+    /// other AppState observer twice a second. Now only this view pays for the refresh,
+    /// and only when there's something to plot.
+    private func startChartTimer() {
+        stopChartTimer()
+        let t = Timer(timeInterval: 1, repeats: true) { _ in
+            chartTick &+= 1
+        }
+        // Run loop modes: `.common` so the chart keeps ticking even while a menu is tracking
+        // (the default `.default` mode is suspended during menu/popover tracking, which would
+        // freeze the chart whenever the user opened the menu-bar popover).
+        RunLoop.main.add(t, forMode: .common)
+        chartTimer = t
+    }
+    private func stopChartTimer() {
+        chartTimer?.invalidate()
+        chartTimer = nil
     }
 
     var handshakeText: String {

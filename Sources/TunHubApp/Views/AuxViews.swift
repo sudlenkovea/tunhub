@@ -1,5 +1,4 @@
 import SwiftUI
-import Combine
 import AppKit
 import ServiceManagement
 import TunHubShared
@@ -87,7 +86,14 @@ struct ImportPreviewView: View {
 
 struct OnboardingView: View {
     @EnvironmentObject var state: AppState
-    @State private var status = DaemonManager.statusText
+
+    /// `state.daemonInstalled` is already @Published and updated by the poll loop every
+    /// few seconds (faster when the window is visible, per the adaptive poll), and
+    /// `restartDaemon()` flips it on success — so this view re-renders automatically when
+    /// the daemon actually comes up. The previous Timer.publish(every: 2) called
+    /// `SMAppService.status` on a wall-clock tick for no benefit, since between user
+    /// actions the status cannot change on its own.
+    var status: String { DaemonManager.statusText }
 
     var body: some View {
         VStack(spacing: 18) {
@@ -135,9 +141,6 @@ struct OnboardingView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
-            status = DaemonManager.statusText
-        }
     }
 }
 

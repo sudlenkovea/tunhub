@@ -60,7 +60,11 @@ struct StatSample: Identifiable {
 final class AppState: ObservableObject {
     @Published var tunnels: [TunnelConfig] = []
     @Published var runtime: [UUID: TunnelRuntimeState] = [:]
-    @Published var history: [UUID: [StatSample]] = [:]      // ~2h at a 2s poll interval
+    /// Per-tunnel rate graph samples. NOT @Published on purpose: appending a sample every
+    /// poll tick used to invalidate the whole SwiftUI tree (sidebar, popover, detail) twice a
+    /// second. Views that need this data pull it on their own cadence — see OverviewView's
+    /// local refresh timer.
+    private(set) var history: [UUID: [StatSample]] = [:]      // ~2h at a 2s poll interval
     @Published var externalIPs: [UUID: String] = [:]         // short status shown inline
     @Published var externalIPDetails: [UUID: String] = [:]   // full explanation (hover help)
     @Published var systemDNS: [String] = []                  // cached; NEVER computed in a view body
@@ -90,6 +94,11 @@ final class AppState: ObservableObject {
     let daemon = DaemonClient()
     let ledger = TrafficLedger()
     let health = HealthChecker()
+    /// Whether any TunHub window is currently on screen. Set by WindowManager on show/close.
+    /// Drives the adaptive poll interval — when nobody is looking and nothing is running,
+    /// we drop to a slow liveness heartbeat instead of re-reading the whole state.
+    var anyWindowVisible = false
+
     private var pollTask: Task<Void, Never>?
 
     init() {
@@ -224,11 +233,19 @@ final class AppState: ObservableObject {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.poll()
-                // 0.5 s only buys a responsive speed graph, which is meaningless when nothing
-                // is running. Idle is the state the app spends most of its life in, so poll
-                // four times more slowly there.
-                let busy = self?.hasActiveTunnels ?? false
-                try? await Task.sleep(nanoseconds: busy ? 500_000_000 : 2_000_000_000)
+                // Adaptive cadence. A menu-bar app spends almost all its life with no window
+                // shown and no tunnel running — there is nothing to look at, so a slow
+                // liveness heartbeat is enough. The daemon still answers immediately when
+                // something actually happens (and the user opening a window drops us back to
+                // the fast path on the next tick).
+                guard let self else { break }
+                let busy = self.hasActiveTunnels
+                let windowVisible = self.anyWindowVisible
+                let ns: UInt64
+                if busy { ns = 500_000_000 }              // 0.5s: smooth speed graph
+                else if windowVisible { ns = 2_000_000_000 }  // 2s: keep the list fresh
+                else { ns = 30_000_000_000 }              // 30s: just "are you alive?"
+                try? await Task.sleep(nanoseconds: ns)
             }
         }
     }
@@ -236,6 +253,19 @@ final class AppState: ObservableObject {
     /// Any tunnel in a state worth watching closely.
     var hasActiveTunnels: Bool {
         runtime.values.contains { $0.phase != .stopped && $0.phase != .failed }
+    }
+
+    /// Drop the slow idle heartbeat and poll right now — call when a window opens or a
+    /// tunnel is started, so the user doesn't stare at stale state for up to 30 s.
+    func pollSoon() {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 100_000_000)   // coalesce a burst of calls
+            guard let self, !Task.isCancelled else { return }
+            await self.poll()
+            // Restart the loop so the new "window visible" interval kicks in immediately
+            // instead of waiting out the previously scheduled 30 s sleep.
+            self.startPolling()
+        }
     }
 
     func poll() async {

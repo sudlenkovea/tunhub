@@ -24,6 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var cancellables = Set<AnyCancellable>()
+    /// Last symbol name shown in the status item — `objectWillChange` fires many times per
+    /// second (history tick, runtime refresh…) and `NSImage(systemSymbolName:)` is not free,
+    /// so we skip the work when the icon would not actually change.
+    private var lastIconName: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         LanguageManager.applySavedOnLaunch()   // re-assert saved interface language
@@ -40,10 +44,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(
-            rootView: MenuBarView().environmentObject(state))
 
         // React to state changes → update the status-item icon.
+        // NB: updateIcon() is a no-op when the symbol wouldn't change, which is the common
+        // case — the icon only depends on (anyUp, anyDegraded, daemonVersionStatus) and not
+        // on the per-second runtime/history churn that drives most objectWillChange fires.
         state.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] in DispatchQueue.main.async { self?.updateIcon() } }
@@ -58,6 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         else if state.anyDegraded { name = "exclamationmark.shield" }
         else if state.anyUp { name = "shield.fill" }
         else { name = "shield" }
+        guard name != lastIconName else { return }
+        lastIconName = name
         button.image = NSImage(systemSymbolName: name, accessibilityDescription: "TunHub")
         button.image?.isTemplate = true
     }
@@ -78,6 +85,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            // Rebuild the popover's SwiftUI tree at open time. The popover is hidden for
+            // the vast majority of the app's life; keeping a live NSHostingController bound
+            // to AppState meant every objectWillChange fire (per-poll runtime/history churn)
+            // drove a full SwiftUI diff of the menu contents — for nothing, since nobody
+            // was looking. Recreating on open is essentially free and gives a fresh snapshot.
+            popover.contentViewController = NSHostingController(
+                rootView: MenuBarView().environmentObject(state))
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
@@ -158,6 +172,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
         w.setFrameAutosaveName("TunHubMain")
         mainWindow = w
         activate(w)
+        windowVisibilityChanged(state: state)
     }
 
     func showLogs() {
@@ -175,6 +190,22 @@ final class WindowManager: NSObject, NSWindowDelegate {
         w.setFrameAutosaveName("TunHubLogs")
         logsWindow = w
         activate(w)
+        windowVisibilityChanged(state: state)
+    }
+
+    /// Central place to recalculate `anyWindowVisible` and poke the poll loop. Called on
+    /// every show / close. Driving the flag from here (rather than KVO on NSWindow.isVisible)
+    /// keeps the logic in one place and lets us wake the loop the instant a window opens,
+    /// so the user never waits up to 30 s on the idle heartbeat for fresh state.
+    private func windowVisibilityChanged(state: AppState) {
+        let visible = (mainWindow?.isVisible ?? false) || (logsWindow?.isVisible ?? false)
+        let wasVisible = state.anyWindowVisible
+        state.anyWindowVisible = visible
+        if !wasVisible && visible {
+            // A window just appeared — drop whatever long idle sleep was scheduled and poll
+            // now so the user sees current state instead of a 30 s-stale snapshot.
+            state.pollSoon()
+        }
     }
 
     /// Bring the app+window fully to the foreground. From an accessory (menu-bar) app the
@@ -211,10 +242,13 @@ final class WindowManager: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         state?.persistOnQuit()
         // Hide the Dock icon again once no TunHub window remains open (back to menu-bar-only).
+        // Also recompute anyWindowVisible so the poll loop can slow back down to the idle
+        // heartbeat — every 30 s instead of every 2 s — when nobody is watching.
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, let state = self.state else { return }
             let anyVisible = (self.mainWindow?.isVisible ?? false) || (self.logsWindow?.isVisible ?? false)
             if !anyVisible { NSApp.setActivationPolicy(.accessory) }
+            self.windowVisibilityChanged(state: state)
         }
     }
 }
