@@ -19,7 +19,7 @@ struct TunHubApp: App {
 
 /// Owns the menu-bar status item, popover, and the main/logs windows.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let state = AppState()
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         popover.behavior = .transient
+        popover.delegate = self
 
         // React to state changes → update the status-item icon.
         // NB: updateIcon() is a no-op when the symbol wouldn't change, which is the common
@@ -83,7 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func togglePopover(_ sender: NSStatusBarButton) {
         if popover.isShown {
-            popover.performClose(nil)
+            closePopover()
         } else {
             // Rebuild the popover's SwiftUI tree at open time. The popover is hidden for
             // the vast majority of the app's life; keeping a live NSHostingController bound
@@ -95,10 +96,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
+            // The popover counts as "someone is watching" for the poll cadence, and we want
+            // the rates, phase and external IP it shows to be current — so pull a fresh
+            // snapshot right now instead of waiting up to 5 s for the next background tick.
+            state.popoverVisible = true
+            state.pollNowAndResume()
         }
     }
 
-    func closePopover() { popover.performClose(nil) }
+    func closePopover() {
+        popover.performClose(nil)
+    }
+
+    // MARK: NSPopoverDelegate
+
+    func popoverWillClose(_ notification: Notification) {
+        // Closing the popover means the user stopped looking. Clear the flag synchronously
+        // so the cadence reevaluation triggered by popoverDidClose sees the new state. We
+        // reevaluate in popoverDidClose (not here) so the popover has fully closed first.
+        state.popoverVisible = false
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        // The popover was the only thing keeping the loop alive (window closed, no active
+        // tunnels) → reevaluate will suspend it. If tunnels are still running, the cadence
+        // just drops back to the 5 s background-watch rate.
+        state.reevaluatePolling()
+    }
 
     /// On quit, if any tunnel is connected, ask whether to disconnect them first.
     /// Yes → stop all, then quit. No → quit and leave the tunnels running. Cancel → stay.

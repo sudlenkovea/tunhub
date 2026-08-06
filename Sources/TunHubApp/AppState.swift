@@ -95,8 +95,13 @@ final class AppState: ObservableObject {
     let ledger = TrafficLedger()
     let health = HealthChecker()
     /// Whether any TunHub window is currently on screen. Set by WindowManager on show/close.
-    /// Together with `hasActiveTunnels` this drives the poll cadence — see `pollingInterval`.
+    /// Together with `hasActiveTunnels` and `popoverVisible` this drives the poll cadence —
+    /// see `pollingInterval`.
     var anyWindowVisible = false
+    /// Whether the menu-bar popover is currently shown. The popover is the user's window into
+    /// active tunnels while the main window is closed (a very common state for a tray app),
+    /// so it has to count as "someone is watching" for cadence purposes.
+    var popoverVisible = false
 
     private var pollTask: Task<Void, Never>?
 
@@ -262,13 +267,15 @@ final class AppState: ObservableObject {
     }
 
     /// Per-state poll interval, in nanoseconds. `0` means "do not poll at all".
-    ///  - active tunnel + visible window: 0.5 s — smooth speed graph
-    ///  - visible window, nothing running: 2 s   — keep the list/status fresh
-    ///  - hidden window, active tunnel:    5 s   — still need to catch phase changes / failover
-    ///  - hidden window, nothing running:  0     — fully suspended
+    /// `someoneWatching` is true when any window OR the menu-bar popover is shown.
+    ///  - active tunnel + someone watching: 0.5 s — smooth speed/rate display
+    ///  - someone watching, nothing running: 2 s   — keep the list/status fresh
+    ///  - nobody watching, active tunnel:    5 s   — still catch phase changes / failover
+    ///  - nobody watching, nothing running:  0     — fully suspended
     private var pollingInterval: UInt64 {
-        if hasActiveTunnels && anyWindowVisible { return 500_000_000 }
-        if anyWindowVisible { return 2_000_000_000 }
+        let watching = anyWindowVisible || popoverVisible
+        if hasActiveTunnels && watching { return 500_000_000 }
+        if watching { return 2_000_000_000 }
         if hasActiveTunnels { return 5_000_000_000 }
         return 0
     }
