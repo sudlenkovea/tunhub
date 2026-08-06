@@ -193,18 +193,23 @@ final class WindowManager: NSObject, NSWindowDelegate {
         windowVisibilityChanged(state: state)
     }
 
-    /// Central place to recalculate `anyWindowVisible` and poke the poll loop. Called on
-    /// every show / close. Driving the flag from here (rather than KVO on NSWindow.isVisible)
-    /// keeps the logic in one place and lets us wake the loop the instant a window opens,
-    /// so the user never waits up to 30 s on the idle heartbeat for fresh state.
+    /// Central place to recalculate `anyWindowVisible` and resume/suspend the poll loop.
+    /// Called on every show / close. Driving the flag from here (rather than KVO on
+    /// NSWindow.isVisible) keeps the logic in one place and lets us wake the loop the
+    /// instant a window opens, so the user never waits for fresh state.
     private func windowVisibilityChanged(state: AppState) {
         let visible = (mainWindow?.isVisible ?? false) || (logsWindow?.isVisible ?? false)
         let wasVisible = state.anyWindowVisible
         state.anyWindowVisible = visible
-        if !wasVisible && visible {
-            // A window just appeared — drop whatever long idle sleep was scheduled and poll
-            // now so the user sees current state instead of a 30 s-stale snapshot.
-            state.pollSoon()
+        if visible {
+            // A window just appeared — poll now so the user sees current state instead of a
+            // stale snapshot, and make sure the loop is running at the visible-window cadence.
+            state.pollNowAndResume()
+        } else if wasVisible {
+            // The last window closed. If there are no active tunnels, this transitions the
+            // app into fully-suspended idle (the loop will cancel itself); if there are, the
+            // loop simply slows down to the "background watch" cadence.
+            state.reevaluatePolling()
         }
     }
 

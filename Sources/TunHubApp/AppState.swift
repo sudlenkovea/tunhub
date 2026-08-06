@@ -95,8 +95,7 @@ final class AppState: ObservableObject {
     let ledger = TrafficLedger()
     let health = HealthChecker()
     /// Whether any TunHub window is currently on screen. Set by WindowManager on show/close.
-    /// Drives the adaptive poll interval — when nobody is looking and nothing is running,
-    /// we drop to a slow liveness heartbeat instead of re-reading the whole state.
+    /// Together with `hasActiveTunnels` this drives the poll cadence — see `pollingInterval`.
     var anyWindowVisible = false
 
     private var pollTask: Task<Void, Never>?
@@ -109,12 +108,15 @@ final class AppState: ObservableObject {
         // Wire the window manager NOW (synchronously, before the async task below runs) so an
         // early checkDaemonVersion() that needs to open the window doesn't hit a nil state.
         WindowManager.shared.state = self
-        startPolling()
         Task {
             await checkDaemonVersion()
             await healDaemonIfNeeded()
             await poll()          // pick up tunnels the daemon is already holding
             await autoConnect()
+            // Start the poll loop AFTER the initial poll, so a freshly-launched app with no
+            // tunnels and no window goes straight to suspended idle (zero CPU) instead of
+            // running a useless 30 s heartbeat forever.
+            reevaluatePolling()
         }
     }
 
@@ -228,43 +230,83 @@ final class AppState: ObservableObject {
         systemDNS = await Task.detached { TunnelProbe.systemPrimaryDNS() }.value
     }
 
-    func startPolling() {
-        pollTask?.cancel()
-        pollTask = Task { [weak self] in
-            while !Task.isCancelled {
-                await self?.poll()
-                // Adaptive cadence. A menu-bar app spends almost all its life with no window
-                // shown and no tunnel running — there is nothing to look at, so a slow
-                // liveness heartbeat is enough. The daemon still answers immediately when
-                // something actually happens (and the user opening a window drops us back to
-                // the fast path on the next tick).
-                guard let self else { break }
-                let busy = self.hasActiveTunnels
-                let windowVisible = self.anyWindowVisible
-                let ns: UInt64
-                if busy { ns = 500_000_000 }              // 0.5s: smooth speed graph
-                else if windowVisible { ns = 2_000_000_000 }  // 2s: keep the list fresh
-                else { ns = 30_000_000_000 }              // 30s: just "are you alive?"
-                try? await Task.sleep(nanoseconds: ns)
-            }
-        }
-    }
-
     /// Any tunnel in a state worth watching closely.
     var hasActiveTunnels: Bool {
         runtime.values.contains { $0.phase != .stopped && $0.phase != .failed }
     }
 
-    /// Drop the slow idle heartbeat and poll right now — call when a window opens or a
-    /// tunnel is started, so the user doesn't stare at stale state for up to 30 s.
-    func pollSoon() {
+    /// The one place that decides whether the poll loop should be running, and at what
+    /// cadence. Call this whenever one of its inputs changes: a window opens or closes, a
+    /// tunnel starts or stops.
+    ///
+    /// The previous design kept a fixed-cadence loop alive forever, just slowing it to a
+    /// 30 s "are you alive?" heartbeat when nothing was happening. That still woke the
+    /// process twice a minute to do an XPC round-trip, decode JSON, rewrite @Published
+    /// runtime/history and invalidate the whole SwiftUI tree — for a menu-bar icon that
+    /// spends 99% of its life with no window and no tunnel, that steady trickle is what
+    /// showed up as a constant few percent CPU and a warm battery. Now the loop is
+    /// cancelled outright in that state: zero timers, zero XPC, zero SwiftUI work.
+    func reevaluatePolling() {
+        let interval = pollingInterval
+        if interval == 0 {
+            // Fully idle: no window shown AND no tunnel to watch. Cancel everything.
+            pollTask?.cancel()
+            pollTask = nil
+            applog.debug("poll", "suspended (no window, no active tunnels)")
+            return
+        }
+        // Already running at the right cadence? Nothing to do — avoid cancelling and
+        // restarting the task on every tick of churn (e.g. history append).
+        if pollTask != nil { return }
+        startPolling(interval: interval)
+    }
+
+    /// Per-state poll interval, in nanoseconds. `0` means "do not poll at all".
+    ///  - active tunnel + visible window: 0.5 s — smooth speed graph
+    ///  - visible window, nothing running: 2 s   — keep the list/status fresh
+    ///  - hidden window, active tunnel:    5 s   — still need to catch phase changes / failover
+    ///  - hidden window, nothing running:  0     — fully suspended
+    private var pollingInterval: UInt64 {
+        if hasActiveTunnels && anyWindowVisible { return 500_000_000 }
+        if anyWindowVisible { return 2_000_000_000 }
+        if hasActiveTunnels { return 5_000_000_000 }
+        return 0
+    }
+
+    private func startPolling(interval: UInt64) {
+        pollTask?.cancel()
+        let initialInterval = interval
+        pollTask = Task { [weak self] in
+            // One immediate poll so the freshly-opened window isn't stale, then loop on the
+            // chosen cadence. reevaluatePolling() is re-entrant safe — calling it after each
+            // poll picks up any cadence change (e.g. user stopped the last tunnel mid-loop)
+            // without needing an external poke.
+            var ns = initialInterval
+            while !Task.isCancelled {
+                await self?.poll()
+                guard let self else { break }
+                // Re-read the desired interval: a phase change inside poll() (tunnel just
+                // came up / went down) or a window closing may have moved us between bands.
+                let now = self.pollingInterval
+                if now == 0 {
+                    // Dropped to fully idle — stop the loop entirely on the next reevaluate.
+                    self.reevaluatePolling()
+                    return
+                }
+                ns = now
+                try? await Task.sleep(nanoseconds: ns)
+            }
+        }
+        applog.debug("poll", "loop started at \(Double(interval) / 1_000_000_000)s")
+    }
+
+    /// Drop whatever sleep was scheduled and poll right now. Used by WindowManager when a
+    /// window opens, so the user doesn't stare at stale state until the next scheduled tick.
+    func pollNowAndResume() {
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 100_000_000)   // coalesce a burst of calls
-            guard let self, !Task.isCancelled else { return }
+            guard let self else { return }
             await self.poll()
-            // Restart the loop so the new "window visible" interval kicks in immediately
-            // instead of waiting out the previously scheduled 30 s sleep.
-            self.startPolling()
+            self.reevaluatePolling()
         }
     }
 
@@ -312,7 +354,9 @@ final class AppState: ObservableObject {
             externalIPs[id] = nil
         }
         // Log phase changes + auto-check external IP on transition to up.
+        var phasesChanged = false
         for (id, s) in newRuntime where lastPhases[id] != s.phase {
+            phasesChanged = true
             let from = lastPhases[id]?.rawValue ?? "—"
             let extra = s.errorMessage.map { ": \($0)" } ?? ""
             applog.info("phase", "“\(s.name)” \(from) → \(s.phase.rawValue)\(extra)")
@@ -332,7 +376,9 @@ final class AppState: ObservableObject {
             if s.phase != .failed { reportedFailures.remove(id) }
             lastPhases[id] = s.phase
         }
-        for id in lastPhases.keys where newRuntime[id] == nil { lastPhases[id] = nil }
+        // A tunnel disappearing from the reply entirely (daemon dropped it) is also a phase
+        // change worth reacting to with a cadence reevaluation.
+        for id in lastPhases.keys where newRuntime[id] == nil { phasesChanged = true; lastPhases[id] = nil }
         runtime = newRuntime
         // Clear the optimistic "stopping" once the daemon confirms (tunnel gone or already .stopped).
         for id in pendingStop where newRuntime[id] == nil || newRuntime[id]?.phase == .stopped {
@@ -342,6 +388,11 @@ final class AppState: ObservableObject {
         // the helper comes up only after launch (e.g. after a password-gated reinstall).
         if daemonReachable && !didAutoConnect { await autoConnect() }
         health.tick(app: self)
+        // A tunnel the daemon manages may have come up or gone down on its own (health-check
+        // restart, failover, server-side disconnect). That can move us between poll bands —
+        // e.g. the last active tunnel just failed and no window is open, so the loop can now
+        // fully suspend. reevaluate is idempotent and cheap.
+        if phasesChanged { reevaluatePolling() }
     }
     private var lastPhases: [UUID: TunnelPhase] = [:]
 
@@ -362,6 +413,9 @@ final class AppState: ObservableObject {
         Task {
             if isRunning(config) { await stop(config) }
             else { try? await start(config) }
+            // Starting/stopping can move us between poll bands (e.g. the first tunnel just
+            // came up while the window is hidden, so we must now poll to catch its phase).
+            reevaluatePolling()
         }
     }
 
@@ -416,6 +470,8 @@ final class AppState: ObservableObject {
             throw error
         }
         await poll()
+        // A new tunnel may have entered `.starting` — make sure we're polling to see it come up.
+        reevaluatePolling()
     }
 
     // MARK: OpenVPN credentials (savable ahead of time, not only at connect)
@@ -493,6 +549,8 @@ final class AppState: ObservableObject {
         try? await daemon.stopTunnel(id: config.id)
         externalIPs[config.id] = nil
         await poll()
+        // If this was the last active tunnel and no window is shown, the loop can now suspend.
+        reevaluatePolling()
     }
 
     func stopAll() async {
@@ -500,6 +558,7 @@ final class AppState: ObservableObject {
         await daemon.stopAll()
         externalIPs.removeAll()
         await poll()
+        reevaluatePolling()
     }
 
     private func markConnected(_ config: TunnelConfig) {
